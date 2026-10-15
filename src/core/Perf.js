@@ -1,5 +1,6 @@
 // Perf: frame pacing (30/60/90/120 target), dynamic resolution, thermal/sustained-load governor, memory + frame stats.
 // It never tries to defeat OS thermal management: it only reduces its own load when the platform or the numbers say so.
+import { registerPlugin, Capacitor } from '@capacitor/core';
 import { clamp } from './math.js';
 
 export const QUALITY = {
@@ -61,9 +62,9 @@ export class Perf {
   initThermal() {
     // Capacitor plugin (Android PowerManager thermal status / iOS ProcessInfo.thermalState) when present
     try {
-      const cap = typeof window !== 'undefined' && window.Capacitor;
-      if (cap && cap.Plugins && cap.Plugins.Thermal) {
-        this.nativeThermal = cap.Plugins.Thermal;
+      if (Capacitor.isNativePlatform()) {
+        // Native plugin: android/.../ThermalPlugin.java, ios/App/App/ThermalPlugin.swift (state: nominal|fair|serious|critical)
+        this.nativeThermal = registerPlugin('Thermal');
         const poll = async () => { try { const r = await this.nativeThermal.getState(); this.setThermal(r.state); } catch (e) { /* plugin missing */ } };
         poll(); this._thermalTimer = setInterval(poll, 5000);
       }

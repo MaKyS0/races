@@ -1,0 +1,19 @@
+{
+  "appId": "com.apexgp.simulator",
+  "appName": "Apex GP Simulator",
+  "webDir": "dist",
+  "backgroundColor": "#000000",
+  "android": {
+    "allowMixedContent": false,
+    "webContentsDebuggingEnabled": false
+  },
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#000000",
+    "preferredContentMode": "mobile"
+  },
+  "server": {
+    "androidScheme": "https",
+    "iosScheme": "capacitor"
+  }
+}
