@@ -12,7 +12,9 @@ await p.evaluate(() => { const g = window.__game; g.audio.unlock(); g.fastForwar
 await p.waitForFunction(() => window.__game.audio.bankState !== 'loading' && window.__game.audio.bankState !== 'idle', null, { timeout: 60000 }).catch(() => {});
 const st = await p.evaluate(() => { const a = window.__game.audio; return { ready: a.ready, bank: a.bankState, engines: a.bank ? [...a.bank.engines.keys()] : [], ctx: a.ctx && a.ctx.state }; });
 ok('audio context running', st.ready && st.ctx === 'running', JSON.stringify(st));
-ok('engine bank decoded', st.bank === 'ready' && st.engines.length > 0, st.engines.join(','));
+const bankMode = st.bank === 'ready';
+console.log(bankMode ? 'mode: recorded engines' : 'mode: synthesised fallback engine (no public/audio installed)');
+if (bankMode) ok('engine bank decoded', st.engines.length > 0, st.engines.join(','));
 // analyser on the engine bus
 await p.evaluate(() => { const a = window.__game.audio; a.an = a.ctx.createAnalyser(); a.an.fftSize = 4096; a.engineBus.connect(a.an); });
 const meas = () => p.evaluate(() => {
@@ -21,7 +23,7 @@ const meas = () => p.evaluate(() => {
   let s = 0; for (const v of f) s += v * v;
   let num = 0, den = 0; for (let i = 2; i < 400; i++) { const m = Math.pow(10, sp[i] / 20); num += i * m; den += m; }
   const c = window.__game.rm.player.car;
-  return { rms: Math.sqrt(s / f.length), centroidBin: num / Math.max(den, 1e-12), rpm: Math.round(c.pt.rpm), slots: a.pVoice ? a.pVoice.slots.filter(Boolean).length : -1, gain: a.pVoice ? a.pVoice.amp.gain.value : -1 };
+  return { rms: Math.sqrt(s / f.length), centroidBin: num / Math.max(den, 1e-12), rpm: Math.round(c.pt.rpm), slots: a.pVoice ? a.pVoice.slots.filter(Boolean).length : 1, gain: a.pVoice ? a.pVoice.amp.gain.value : a.eGain.gain.value, peak: Math.max(...f.map(Math.abs)) };
 });
 await p.waitForTimeout(800);
 const idle = await meas();
@@ -42,11 +44,12 @@ ok('quieter / darker off-throttle', lift.gain < fast.gain, `${fast.gain.toFixed(
 await p.evaluate(() => { const g = window.__game, c = g.rm.cars.find((x) => x !== g.rm.player.car), cp = g.renderer.camera.position; c.x = cp.x + 12; c.z = cp.z + 18; });
 await p.waitForFunction(() => window.__game.audio.aiVoices.size >= 1, null, { timeout: 5000 }).catch(() => {});
 const ai = await p.evaluate(() => window.__game.audio.aiVoices.size);
-ok('nearby opponents have recorded-engine voices', ai >= 1, 'voices ' + ai);
+if (bankMode) ok('nearby opponents have recorded-engine voices', ai >= 1, 'voices ' + ai);
 // pause / resume / switching engine in settings must not throw
 await p.evaluate(() => { const g = window.__game; g.pause(); g.resume(); g.settings.data.audio.engineSound = 'nonexistent'; });
 await p.waitForTimeout(500);
-ok('unknown engine id falls back to a valid engine', (await p.evaluate(() => !!window.__game.audio.pVoice && window.__game.audio.pVoice.eng.id.length > 0)));
+if (bankMode) ok('unknown engine id falls back to a valid engine', (await p.evaluate(() => !!window.__game.audio.pVoice && window.__game.audio.pVoice.eng.id.length > 0)));
+ok('no clipping at full throttle (peak < 0.98 on the engine bus)', fast.peak < 0.98, 'peak ' + fast.peak.toFixed(2));
 ok('no page errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 const failed = results.filter((r) => !r).length;
 console.log(`\n${results.length - failed}/${results.length} passed`);

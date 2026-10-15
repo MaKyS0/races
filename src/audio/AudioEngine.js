@@ -66,18 +66,29 @@ export class AudioEngine {
     this.engineBus = ctx.createGain(); this.engineBus.connect(this.master);
     this.fxBus = ctx.createGain(); this.fxBus.connect(this.master);
     this.noiseBuf = this.noiseBuffer(3);
-    // ---- player engine
+    // ---- player engine (synthesised fallback): two cylinder banks (PeriodicWave pulse trains, slightly detuned -> beating),
+    // a rev-frequency sub-harmonic, fixed exhaust resonances (the 'scream'), combustion noise, MGU-K whine, turbo whistle
     const mk = (type, gain) => { const o = ctx.createOscillator(); o.type = type; const g = ctx.createGain(); g.gain.value = gain; o.connect(g); return { o, g }; };
-    this.eo = [mk('sawtooth', 0.5), mk('sawtooth', 0.3), mk('square', 0.16), mk('sawtooth', 0.34)];
-    this.eFilter = ctx.createBiquadFilter(); this.eFilter.type = 'lowpass'; this.eFilter.Q.value = 2.2;
+    const H = 48, re = new Float32Array(H + 1), im = new Float32Array(H + 1);
+    for (let h = 1; h <= H; h++) { const duty = 0.16; im[h] = Math.sin(Math.PI * h * duty) / h * (1 + 0.5 * Math.cos(h * 0.9)); }   // narrow pulse -> rich, slightly uneven harmonics
+    const wave = ctx.createPeriodicWave(re, im);
+    const mkw = (gain) => { const o = ctx.createOscillator(); o.setPeriodicWave(wave); const g = ctx.createGain(); g.gain.value = gain; o.connect(g); return { o, g }; };
+    this.eo = [mkw(0.55), mkw(0.45), mk('sine', 0.35), mk('triangle', 0.18)];   // bankA, bankB (detuned), rev-order sub, half-order rumble
+    this.eFilter = ctx.createBiquadFilter(); this.eFilter.type = 'lowpass'; this.eFilter.Q.value = 1.4;
     this.eShaper = ctx.createWaveShaper();
-    const curve = new Float32Array(256); for (let i = 0; i < 256; i++) { const x = i / 128 - 1; curve[i] = Math.tanh(x * 2.2); } this.eShaper.curve = curve;
+    const curve = new Float32Array(256); for (let i = 0; i < 256; i++) { const x = i / 128 - 1; curve[i] = Math.tanh(x * 1.8); } this.eShaper.curve = curve;
     this.eGain = ctx.createGain(); this.eGain.gain.value = 0;
     this.eAM = ctx.createGain(); this.eAM.gain.value = 1;
     for (const e of this.eo) { e.g.connect(this.eShaper); e.o.start(); }
-    this.eShaper.connect(this.eFilter); this.eFilter.connect(this.eAM); this.eAM.connect(this.eGain); this.eGain.connect(this.engineBus);
+    this.eShaper.connect(this.eFilter);
+    // parallel exhaust resonances (fixed formants) added on top of the low-passed core
+    this.eRes = [[620, 3, 0.5], [1450, 4, 0.55], [3100, 5, 0.4]].map(([fr, q, gn]) => { const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = fr; f.Q.value = q; const g = ctx.createGain(); g.gain.value = gn; this.eShaper.connect(f); f.connect(g); g.connect(this.eAM); return { f, g }; });
+    this.eFilter.connect(this.eAM); this.eAM.connect(this.eGain); this.eGain.connect(this.engineBus);
     this.lfo = ctx.createOscillator(); this.lfo.type = 'square'; this.lfo.frequency.value = 24; this.lfoG = ctx.createGain(); this.lfoG.gain.value = 0; this.lfo.connect(this.lfoG); this.lfoG.connect(this.eAM.gain); this.lfo.start();
-    // turbo whistle
+    // combustion / intake roar: noise band-passed around 2x firing frequency
+    this.eNoise = this.loopNoise('bandpass', 1500, 1.2); this.eNoise.g.connect(this.engineBus);
+    // MGU-K / gearbox whine and turbo whistle
+    this.whine = mk('sine', 0.0); this.whine.o.start(); this.whine.g.connect(this.engineBus);
     this.turbo = mk('sine', 0.0); this.turbo.o.start(); this.turbo.g.connect(this.engineBus);
     // ---- continuous layers
     this.wind = this.loopNoise('lowpass', 400); this.wind.g.connect(this.fxBus);
@@ -160,21 +171,24 @@ export class AudioEngine {
         this.pVoice = new EngineVoice(ctx, this.engineBus, eng, { limiterLfo: true }); this.pEngId = eng.id;
       }
       this.pVoice.set(rpm, running ? thr : 0, running ? 1.7 : 0, now, { limiter: !!car.pt.limiter, shifting: car.pt.shiftTimer > 0 });
-      S(this.eGain.gain, 0, 0.03); S(this.turbo.g.gain, 0, 0.1);
+      S(this.eGain.gain, 0, 0.03); S(this.turbo.g.gain, 0, 0.1); S(this.whine.g.gain, 0, 0.1); S(this.eNoise.g.gain, 0, 0.05);
     } else {
-      const f0 = rpm / 60 * 3;
-      const f = Math.max(30, f0);
-      S(this.eo[0].o.frequency, f, 0.02); S(this.eo[1].o.frequency, f * 2.004, 0.02); S(this.eo[2].o.frequency, f * 4.01, 0.02); S(this.eo[3].o.frequency, f * 0.5, 0.02);
-      const load = 0.28 + 0.72 * thr;
-      S(this.eFilter.frequency, 500 + load * 4200 + rpm * 0.18, 0.04);
-      let g = running ? (0.10 + 0.34 * load) * (0.5 + 0.5 * clamp(rpm / 9000, 0, 1.2)) : 0;
-      if (car.pt.shiftTimer > 0) g *= 0.55;
+      const f = Math.max(30, rpm / 60 * 3);                         // V6 firing frequency
+      S(this.eo[0].o.frequency, f, 0.02); S(this.eo[1].o.frequency, f * 1.006, 0.02);   // two banks, 0.6 % apart -> slow beating
+      S(this.eo[2].o.frequency, f / 3, 0.02); S(this.eo[3].o.frequency, f / 6, 0.02);
+      const load = 0.25 + 0.75 * thr, rr = clamp(rpm / 15000, 0, 1.05);
+      S(this.eFilter.frequency, 450 + load * 3200 + rr * 3800, 0.04);
+      for (const r of this.eRes) S(r.g.gain, running ? (0.12 + 0.5 * load) * (0.35 + 0.65 * rr) : 0, 0.05);
+      let g = running ? (0.10 + 0.30 * load) * (0.45 + 0.55 * Math.min(1.2, rpm / 9000)) : 0;
+      if (car.pt.shiftTimer > 0) g *= 0.5;
       S(this.eGain.gain, g, 0.03);
+      S(this.eNoise.f.frequency, Math.max(300, f * 2), 0.05); S(this.eNoise.g.gain, running ? (0.015 + 0.075 * load * load) * (0.3 + 0.7 * rr) : 0, 0.05);
       // rev limiter chop
       S(this.lfoG.gain, car.pt.limiter ? 0.5 : 0, 0.01);
       S(this.eAM.gain, car.pt.limiter ? 0.5 : 1, 0.01);
-      // turbo whistle
-      S(this.turbo.o.frequency, 2600 + thr * 5500 * clamp(rpm / 13000, 0, 1), 0.08); S(this.turbo.g.gain, running ? 0.012 + 0.03 * thr : 0, 0.1);
+      // MGU-K whine rises with speed, turbo whistle with throttle
+      S(this.whine.o.frequency, 1400 + rpm * 0.22, 0.05); S(this.whine.g.gain, running ? 0.004 + 0.012 * thr * rr : 0, 0.1);
+      S(this.turbo.o.frequency, 2600 + thr * 5500 * clamp(rpm / 13000, 0, 1), 0.08); S(this.turbo.g.gain, running ? 0.006 + 0.016 * thr : 0, 0.1);
     }
     // lift-off crackle + shifts
     if (this.lastThr > 0.8 && thr < 0.15 && rpm > 9000 && !this.bank) { for (let i = 0; i < 3; i++) setTimeout(() => this.burst(0.05 + Math.random() * 0.05, 2400, 0.22), i * 60 + Math.random() * 40); }
