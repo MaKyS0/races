@@ -43,8 +43,10 @@ export class Game {
     this.hud.onPitCompound = (c) => { if (this.rm && this.rm.player) this.rm.player.nextCompound = c; };
     window.addEventListener('resize', () => this.renderer.applyScale());
     document.addEventListener('visibilitychange', () => { if (document.hidden && this.state === 'playing') this.pause(); });
+    // browsers only let an AudioContext start from a 'user activation' event: touch screens count touchend / pointerup / click, not pointerdown
     const unlock = () => this.audio.unlock();
-    window.addEventListener('pointerdown', unlock); window.addEventListener('keydown', unlock);
+    for (const ev of ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown']) window.addEventListener(ev, unlock, { passive: true });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) this.audio.unlock(); });   // Android / iOS suspend the context while the app is in the background
     this.loop = this.loop.bind(this);
     this.timing = { phys: 0, render: 0, cpu: 0 };
     this.blueFlag = false; this.blueT = 0;

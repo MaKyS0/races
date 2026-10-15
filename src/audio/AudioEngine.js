@@ -36,8 +36,10 @@ export class AudioEngine {
     if (this.ready) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
     const AC = typeof window !== 'undefined' && (window.AudioContext || window.webkitAudioContext);
     if (!AC) return;
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) { /* iOS 16.4+: play even with the silent switch on */ }
     try { this.ctx = new AC({ latencyHint: 'interactive' }); } catch (e) { return; }
     this.build();
+    this.applyVolumes();
     this.ready = true;
     this.loadBank();
     if (this.ctx.state === 'suspended') this.ctx.resume();
@@ -159,6 +161,7 @@ export class AudioEngine {
   update(dt, rm, cam, focusCar) {
     if (!this.ready || this.paused || !focusCar) return;
     this.t += dt;
+    if (this.ctx.state !== 'running' && (this.resumeT = (this.resumeT || 0) - dt) <= 0) { this.resumeT = 1; try { this.ctx.resume(); } catch (e) { /* needs a user gesture; the next one retries */ } }   // 'suspended' / iOS 'interrupted' after a call or app switch
     const ctx = this.ctx, now = ctx.currentTime, car = focusCar;
     const S = (p, v, tc = 0.03) => p.setTargetAtTime(v, now, tc);
     const rpm = car.pt.rpm, thr = car.pt.throttleApplied, sp = car.speed;

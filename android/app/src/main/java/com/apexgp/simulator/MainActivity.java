@@ -17,6 +17,8 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(ThermalPlugin.class);
         super.onCreate(savedInstanceState);
+        // WebAudio (engine sound) must be allowed to start without the WebView's own 'media needs a gesture' rule on top of the page's gesture
+        try { getBridge().getWebView().getSettings().setMediaPlaybackRequiresUserGesture(false); } catch (Throwable ignored) { /* WebView not ready */ }
         Window w = getWindow();
         w.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
