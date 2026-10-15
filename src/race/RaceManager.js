@@ -277,7 +277,8 @@ export class RaceManager {
     g *= 0.25;
     const dm = car.damage;
     let pl = Math.sqrt(clamp(g / 0.985, 0.35, 1));
-    pl *= this.aeroGripFactor(car) * (1 - 0.1 * Math.max(dm.sus[0], dm.sus[1], dm.sus[2], dm.sus[3]));
+    pl *= this.aeroGripFactor(car) * (1 - 0.55 * Math.max(dm.sus[0], dm.sus[1], dm.sus[2], dm.sus[3]));   // a broken wishbone / pushrod: crawl to the pits (it was -10 %, i.e. flat out with a wheel hanging off)
+    if (car.tires.some((t) => t.puncture > 0.4)) pl *= 0.6;
     // aquaplaning risk: slow down in standing water at high speed
     if (w > 0.3) pl *= 1 - 0.12 * (w - 0.3);
     return pl;
@@ -812,6 +813,7 @@ export class RaceManager {
     d.compoundsUsed.add(comp);
     dm.fwL = dm.fwR = 0; if (dm.rw < 0.9) dm.rw = 0; dm.floor *= 0.5;
     dm.tyrePunct.fill(0);
+    for (let i = 0; i < 4; i++) if (dm.sus[i] < 0.9) dm.sus[i] = 0;   // the crew replaces bent wishbones / rods (a destroyed corner is a retirement)
     d.service = null; d.pitStops++; d.pitState = 'in'; d.lastStop = this.time; d.servedVisit = true; d.forcePit = false;
     car.holdBrake = 0;
     d.wantPit = false;
@@ -915,6 +917,7 @@ export class RaceManager {
     const ai = d.ai, car = d.car;
     if (d.finished) { ai.pit.want = false; return; }
     if (this.phase !== 'racing') return;
+    if (!car.retired && Math.max(car.damage.sus[0], car.damage.sus[1], car.damage.sus[2], car.damage.sus[3]) >= 0.9) { car.retired = true; car.retireReason = 'Suspension damage'; ai.enabled = false; return; }
     if ((this.tick & 31) !== 0) return;
     const w = this.env.water;
     let avgWear = 0; for (const t of car.tires) avgWear += t.wear; avgWear /= 4;
