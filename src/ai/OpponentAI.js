@@ -35,6 +35,7 @@ export class DriverAI {
     this.drsWanted = false;
     this.squeeze = 0;
     this.exitWait = 0; this.offCmd = 0;
+    this.yieldFlag = false; this.yieldSide = 0;   // set by RaceManager: let faster cars through (lapped / slow quali laps)
     this.merge = null;       // {n, s0}: smooth join from the pit exit onto the racing line
     this.startLane = null;   // {n, s0}: hold the grid lane until the field has spread out
   }
@@ -122,6 +123,14 @@ export class DriverAI {
         if (this.defendTimer > 0) desiredOff += clamp(dn, -1.4, 1.4) * 0.7;
       }
       this.defendTimer = Math.max(0, this.defendTimer - dt);
+      // blue flag / slow lap: step off the racing line to let a much faster car through
+      if (this.yieldFlag && bh && ctx.behindGap < 110 && this.passSide === 0) {
+        const dnb = bh.loc.n - myN;
+        const sideY = dnb > 0.5 ? -1 : dnb < -0.5 ? 1 : (this.yieldSide || -1);
+        this.yieldSide = sideY;
+        const room = sideY > 0 ? this.limL(iLook) - 0.3 : -(this.limR(iLook) - 0.3);
+        desiredOff = clamp(room - nLine, -5.4, 5.4);
+      }
     }
     // smooth the offset
     const rate = 3.2 * dt;

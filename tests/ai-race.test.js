@@ -152,3 +152,23 @@ describe('traffic behaviour (regression for multi-car robustness)', () => {
     expect(d.pitStops).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe('sessions', () => {
+  it('qualifying: the lap that starts in the pit lane is an out lap; the pole lap is a flying lap near the race pace', () => {
+    const q = new RaceManager({ trackId: 'monza', mode: MODE.QUALI, qualiMinutes: 4, aiCount: 3, autopilotPlayer: true, seed: 5 });
+    q.begin(); while (q.simTime < 480 && q.phase !== 'finished') q.step(PHYS_DT);
+    expect(q.phase).toBe('finished');
+    const timed = q.drivers.filter((d) => isFinite(d.best));
+    expect(timed.length).toBeGreaterThanOrEqual(3);
+    for (const d of timed) { expect(d.lapTimes[0].t).toBeGreaterThan(d.best * 1.05); }
+    const pole = Math.min(...timed.map((d) => d.best));
+    expect(pole).toBeGreaterThan(80); expect(pole).toBeLessThan(95);
+  }, 60000);
+  it('a formation lap leads to a normal start without contacts', () => {
+    const rm = new RaceManager({ trackId: 'silverstone', mode: MODE.RACE, laps: 1, aiCount: 9, autopilotPlayer: true, seed: 4, formationLap: true });
+    rm.begin(); const seen = new Set(); let serious = 0;
+    while (rm.simTime < 400 && rm.phase !== 'finished') { rm.step(PHYS_DT); seen.add(rm.phase); for (const e of rm.events) if (e.type === 'impact' && e.energy > 25000) serious++; rm.events.length = 0; }
+    expect(['formation', 'lights', 'racing', 'finished'].every((p) => seen.has(p))).toBe(true);
+    expect(serious).toBeLessThan(3);
+  }, 60000);
+});

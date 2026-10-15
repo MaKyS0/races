@@ -472,6 +472,16 @@ export class RaceManager {
       const g2 = tr.delta(car.loc.s, c2.loc.s);
       if (g2 > -12 && g2 < 75 && ctx.nNear < 10) ctx.near[ctx.nNear++] = c2;
     }
+    // blue flags (race) and slow laps (practice / qualifying): move off the line for a clearly faster car approaching from behind
+    {
+      const ai = d.ai; ai.yieldFlag = false;
+      const bh = ctx.behind;
+      if (bh && bh.d && ctx.behindGap < 110) {
+        const bd = bh.d;
+        if (this.cfg.mode === MODE.RACE) ai.yieldFlag = this.phase === 'racing' && !this.sc && bd.progress - d.progress > tr.length * 0.7 && !bd.finished;
+        else ai.yieldFlag = (d.qualiState === 'out' || d.qualiState === 'in') && bd.qualiState === 'push';
+      }
+    }
     ctx.noPass = !!this.sc || (this.cfg.mode === MODE.RACE && this.raceStarted && this.time < 35) || d.ai.noPassForm || this.flag === 'yellowfull' || (this.cfg.mode !== MODE.RACE && false);
     // lapped cars let faster cars through (blue flag): stay off the racing line
     ctx.race = this.cfg.mode === MODE.RACE || true;
@@ -926,6 +936,8 @@ export class RaceManager {
     // fuel-aware pacing / retired cars
     if (car.retired) ai.enabled = false;
   }
+  /** push-lap pace multiplier: slightly above race pace (low fuel, fresh softs), scaled by the difficulty tier */
+  pushPace(quali) { const p = 1 + 0.2 * (this.diff.quali - 0.9); return quali ? p : 0.97 * p; }
   qualiProgram(d, dt) {
     const ai = d.ai, car = d.car, tr = this.track;
     const diff = this.diff;
@@ -942,12 +954,12 @@ export class RaceManager {
           const comp = this.weather.recommendedCompound('soft');
           if (car.compound.id !== comp) { car.fitTyres(comp, 70); d.compoundsUsed.add(comp); }
           ai.pit.state = PIT.EXIT; ai.pit.want = false;
-          d.timing = false; d.lapInvalid = false;
+          d.timing = false; d.lapInvalid = false; d.outStartLaps = d.lapsCompleted;
         }
         break;
       case 'out':
         // out lap: low pace until the car has crossed the line (timing armed) then push
-        if (d.timing && !car.inPit) { d.qualiState = 'push'; ai.pace = quali ? diff.quali : 0.96 * diff.quali; }
+        if (d.timing && !car.inPit && d.lapsCompleted > (d.outStartLaps ?? -1)) { d.qualiState = 'push'; ai.pace = this.pushPace(quali); }   // the lap that starts in the pit lane is the out lap
         else ai.pace = quali ? 0.82 : 0.85;
         break;
       case 'push':
