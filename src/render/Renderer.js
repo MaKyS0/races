@@ -20,13 +20,13 @@ export class Renderer3D {
     this.qname = perf.qualityName(); this.q = QUALITY[this.qname];
     const gl = this.renderer = new THREE.WebGLRenderer({ canvas, antialias: this.q.antialias, powerPreference: 'high-performance', alpha: false, stencil: false, preserveDrawingBuffer: !!settings.data.preserveBuffer });
     gl.outputColorSpace = THREE.SRGBColorSpace;
-    gl.toneMapping = THREE.ACESFilmicToneMapping; gl.toneMappingExposure = 1.0;
+    gl.toneMapping = THREE.ACESFilmicToneMapping; gl.toneMappingExposure = 1.12;
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(62, 1, 0.12, 7000);
-    this.sky = new Sky(); this.scene.add(this.sky.mesh);
-    this.scene.fog = new THREE.Fog(0xbcd6f0, 300, 1500);
-    this.hemi = new THREE.HemisphereLight(0xcfe3ff, 0x59693f, 0.95); this.scene.add(this.hemi);
-    this.sun = new THREE.DirectionalLight(0xfff0d8, 2.2);
+    this.sky = new Sky(this.qname); this.skyLow = this.qname === 'low'; this.scene.add(this.sky.mesh);
+    this.scene.fog = new THREE.Fog(0xb4cfee, 300, 1500);
+    this.hemi = new THREE.HemisphereLight(0xd6e6ff, 0x6b7a4a, 1.05); this.scene.add(this.hemi);
+    this.sun = new THREE.DirectionalLight(0xffeccc, 2.6);
     this.sunDir = new THREE.Vector3(0.45, 0.62, 0.35).normalize();
     this.scene.add(this.sun, this.sun.target);
     this.raceGroup = new THREE.Group(); this.scene.add(this.raceGroup);
@@ -112,6 +112,7 @@ export class Renderer3D {
       this.qname = name; this.q = QUALITY[name];
       this.setupShadows();
       this.effects.setQuality(this.q);
+      if ((name === 'low') !== this.skyLow) { const w = this.sky.uniforms; this.scene.remove(this.sky.mesh); this.sky.mesh.material.dispose(); this.sky = new Sky(name); this.skyLow = name === 'low'; this.scene.add(this.sky.mesh); this.sky.setWeather(this.lastCloud < 0 ? 0.1 : this.lastCloud, 0); }
       this.scene.fog.far = this.q.drawDistance * 1.05; this.scene.fog.near = this.q.drawDistance * 0.3;
     }
     this.applyScale();
@@ -237,7 +238,7 @@ export class Renderer3D {
     // world culling / chunks
     this.trackMesh.update(cam.x, cam.z, q.drawDistance);
     this.decor.update(cam.x, cam.z, q);
-    this.sky.follow(this.camera);
+    this.sky.follow(this.camera, dt);
     this.emitEffects(rm, dt, alpha);
     this.effects.update(dt);
     this.effects.updateDebris(dt);

@@ -118,10 +118,10 @@ function teamMaterials(teamIdx, quality) {
   const t = TEAMS[teamIdx % TEAMS.length];
   const std = quality === 'low' ? (p) => new THREE.MeshLambertMaterial({ color: p.color }) : (p) => new THREE.MeshStandardMaterial(p);
   const m = {
-    body: std({ color: t.color, metalness: 0.3, roughness: 0.32 }),
+    body: quality === 'low' ? std({ color: t.color }) : new THREE.MeshPhysicalMaterial({ color: t.color, metalness: 0.35, roughness: 0.3, clearcoat: quality === 'high' ? 1.0 : 0.5, clearcoatRoughness: 0.12 }),
     accent: std({ color: t.accent, metalness: 0.2, roughness: 0.4 }),
-    carbon: std({ color: 0x1b1c21, metalness: 0.25, roughness: 0.45 }),
-    black: new THREE.MeshLambertMaterial({ color: 0x111113 }),
+    carbon: std({ color: 0x2b2d34, metalness: 0.3, roughness: 0.42 }),
+    black: new THREE.MeshLambertMaterial({ color: 0x1f2024 }),
     rim: std({ color: 0xb8bcc4, metalness: 0.9, roughness: 0.25 }),
     helmet: std({ color: t.accent, metalness: 0.2, roughness: 0.3 }),
   };
@@ -135,8 +135,8 @@ function lodGeometry(teamIdx, level) {
   const gs = [
     tint(clean(merge([P.mono, P.airbox, P.podL, P.podR])), t.color),
     tint(clean(merge([P.stripe, P.stripeNose, P.podStripeL, P.podStripeR])), t.accent),
-    tint(clean(merge([P.floor, P.diffuser, P.fwNose, P.halo, P.mirrors, P.rwFixed])), 0x16171b),
-    tint(clean(merge([P.fwL, P.fwR])), 0x1a1b20),
+    tint(clean(merge([P.floor, P.diffuser, P.fwNose, P.halo, P.mirrors, P.rwFixed])), 0x25272d),
+    tint(clean(merge([P.fwL, P.fwR])), 0x2a2c33),
     tint(clean(P.helmet.clone()), t.accent),
   ];
   const body = merge(gs.map((g) => g));
@@ -150,7 +150,7 @@ function wheelGeo(rear, compound) {
   if (wheelLod.has(key)) return wheelLod.get(key);
   const S = buildShared(); const R = rear ? CAR.Rw[2] : CAR.Rw[0];
   const idx = rear ? 1 : 0;
-  const tire = tint(clean(S.tire[idx].clone().scale(R, 1, R)), 0x141416);
+  const tire = tint(clean(S.tire[idx].clone().scale(R, 1, R)), 0x25272c);
   const rim = tint(clean(S.rim[idx].clone().scale(R, 1, R)), 0xaab0b8);
   const comp = tint(clean(S.ring.clone().scale(1, R, R).translate(rear ? 0.235 : 0.205, 0, 0)), new THREE.Color(COMPOUNDS[compound].color));
   const g = merge([tire, rim, comp]);

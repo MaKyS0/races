@@ -29,7 +29,7 @@ const WB = CAR.a + CAR.b;
 const K_DIFF = 140; // Nm per rad/s LSD coupling
 
 export const DEFAULT_SETUP = { frontWing: 5, rearWing: 5, brakeBias: 0.575, diffPreload: 120, diffPower: 0.35, engineBraking: 0.7 };
-export const DEFAULT_ASSISTS = { abs: 0, tc: 1, steer: 1, autoGear: true, brakeHelp: 0 };
+export const DEFAULT_ASSISTS = { abs: 0, tc: 1, steer: 1, autoGear: true, brakeHelp: 1 };
 
 export class Vehicle {
   constructor(id = 0) {
@@ -64,6 +64,7 @@ export class Vehicle {
     this.partsLost = 0;
     this.retired = false; this.retireReason = '';
     this.tcCut = 0; this.tcActive = false; this.absActive = false;
+    this.tractionCap = 0; this.tractionLimited = false; this.brakeLim = 1; this.wRearPrev = 0; this.wAccF = 0; this.fzF = new Float64Array(4).fill(2400);
     this.sparks = 0; this.kerbShake = 0; this.dragN = 0; this.downN = 0;
     this.lastImpact = 0;
     this.lod = 0; this.lodCount = 0;
@@ -233,6 +234,7 @@ export class Vehicle {
     F0[0] += arbF; F0[1] -= arbF; F0[2] += arbR; F0[3] -= arbR;
     // static weight per wheel
     const Wf = (m * G * C.b) / WB / 2, Wr = (m * G * C.a) / WB / 2;
+    const kFz = expK(25, dt);
     const geoRollF = (fyF * C.hRcF) / C.tf, geoRollR = (fyR * C.hRcR) / C.tr; // left force -> load to the right tyre
     for (let i = 0; i < 4; i++) {
       let fz = (i < 2 ? Wf : Wr) + F0[i];
@@ -241,6 +243,7 @@ export class Vehicle {
       const sideLeft = i === 0 || i === 2;
       fz += (sideLeft ? -1 : 1) * (i < 2 ? geoRollF : geoRollR);
       this.fz[i] = clamp(fz, -50, 40000);
+      this.fzF[i] += (this.fz[i] > 0 ? this.fz[i] - this.fzF[i] : -this.fzF[i]) * kFz;   // load seen by the torque / brake budgets: ~25 Hz low-pass
     }
     // ---------- aero (uses ride heights from the body state)
     this.rideF = -1000 * (this.h + C.a * this.th);
@@ -308,7 +311,28 @@ export class Vehicle {
     // ------------------------------------------------------ brakes
     const wRearAvg = 0.5 * (this.wOmega[0 + 2] + this.wOmega[3]);
     const regenAvail = pt.regenAvailable(brk, wRearAvg, speed);
-    brakes.update(dt, brk, this.kappa, absLevel, regenAvail, clamp(water * 2, 0, 1), speed, null);
+    // Brake-by-wire pressure ceilings (assists.brakeHelp, on for the player). Each axle's hydraulic pressure is capped at what its
+    // tyres can hold right now (friction circle with the lateral force already in use, load transfer, downforce, surface, tyre
+    // temperature, pad efficiency) - the brake bias still decides how the pedal travel is split below the ceiling. A pedal of 1.0
+    // is therefore 'as hard as the tyres allow' instead of 'lock everything'; partial pedal gives proportional braking. Rain,
+    // cold tyres or a kerb lower the ceiling, and a wheel that locks anyway has its pressure eased until it rolls again.
+    let limF = 0, limR = 0;
+    if (this.assists.brakeHelp && brk > 0.02 && speed > 3) {
+      let capF = 0, capR = 0;
+      for (let i = 0; i < 4; i++) {
+        if (dm.wheelOff[i]) continue;
+        const mf = this.tires[i].mu * this.fzF[i];
+        const fyr = Math.min(Math.abs(this.fyw[i]), mf * 0.9);
+        const avail = Math.sqrt(Math.max(mf * mf - fyr * fyr, 0.04 * mf * mf)) * C.Rw[i];
+        const lockEase = 1 - 0.45 * clamp((-this.kappa[i] - 0.25) / 0.35, 0, 1);
+        if (i < 2) capF += avail * lockEase; else capR += avail * lockEase;
+      }
+      const effF = Math.max(0.35, 0.5 * (brakes.efficiency[0] + brakes.efficiency[1]) || 0.8), effR = Math.max(0.35, 0.5 * (brakes.efficiency[2] + brakes.efficiency[3]) || 0.8);
+      limF = capF / effF; limR = capR / effR;   // hydraulic torque (Nm, axle) that just reaches the friction limit
+    }
+    brakes.setCeiling(limF, limR);
+    const brkP = brk;
+    brakes.update(dt, brkP, this.kappa, absLevel, regenAvail, clamp(water * 2, 0, 1), speed, null);
     let absOn = false;
     for (let i = 0; i < 4; i++) if (brakes.absRelease[i] > 0.05) absOn = true;
     this.absActive = absOn;
@@ -329,7 +353,40 @@ export class Vehicle {
     this.tcActive = this.tcCut > 0.05;
 
     // ------------------------------------------------------ powertrain
-    const axleT = retired ? 0 : pt.update(dt, thr, brk, wRearAvg, speed, ctrl.up, ctrl.down, brakes.regenTorque, this.tcCut, false);
+    let axleT = retired ? 0 : pt.update(dt, thr, brk, wRearAvg, speed, ctrl.up, ctrl.down, brakes.regenTorque, this.tcCut, false);
+    // Drive-by-wire torque map: the engine management never asks for much more axle torque than the rear tyres can transmit right
+    // now. The budget is the friction circle of each driven tyre (mu*Fz from load transfer, downforce, surface, temperature and wear)
+    // minus the lateral force the tyre is already producing, so power is traded against cornering grip. The allowance above 1.0
+    // is what lets a clumsy / violent throttle still break the rear loose (more with the traction-control assist off).
+    const wRearPrevNow = wRearAvg;
+    if (axleT > 0) {
+      let budget = 0;
+      for (let i = 2; i < 4; i++) {
+        if (dm.wheelOff[i]) continue;
+        const t = this.tires[i];
+        const mf = t.mu * this.fzF[i];
+        // lateral force the axle has to keep producing to hold the present path (kinematic, so a tyre that is already sliding
+        // cannot 'free up' longitudinal budget by losing lateral force)
+        const fy = Math.max(Math.abs(this.fyw[i]), 0.5 * m * Math.max(Math.abs(this.ayBody), speed * Math.abs(this.r)) * C.a / WB);
+        budget += Math.sqrt(Math.max(mf * mf - Math.min(fy, mf) * Math.min(fy, mf), 0.0225 * mf * mf)) * C.Rw[i];
+      }
+      const tcL2 = this.assists.tc;
+      const allow = tcL2 >= 2 ? 0.9 : tcL2 === 1 ? 0.97 : 1.12;
+      // torque that only spins the engine / driveline up (reflected inertia x wheel acceleration) never reaches the road
+      const wAcc = (wRearAvg - this.wRearPrev) / dt;
+      this.wAccF += (wAcc - this.wAccF) * expK(30, dt);
+      const inertial = pt.reflectedInertia() * Math.max(this.wAccF, 0);
+      // wheels that are already far beyond the peak get less torque until they grip again (a spinning tyre only delivers ~70 % of its
+      // peak, so without this a spun-up wheel would stay spun-up for as long as the pedal is held)
+      const kRear = Math.max(this.kappa[2], this.kappa[3], 0);
+      const recover = 1 - 0.5 * clamp((kRear - 0.22) / 0.28, 0, 1);
+      const capT = budget * allow * recover + inertial;
+      // the budget may drop instantly (load leaves the tyre, lateral force rises) but only recovers at a finite rate, so the first
+      // instants of a launch and every abrupt pedal stab cannot overshoot before the tyres' state has been seen
+      if (capT < this.tractionCap) this.tractionCap = capT; else this.tractionCap += (capT - this.tractionCap) * expK(40, dt);
+      if (axleT > this.tractionCap) { axleT = this.tractionCap; this.tractionLimited = true; } else this.tractionLimited = false;
+    } else { this.tractionCap = Math.max(this.tractionCap, 0); this.tractionLimited = false; }
+    this.wRearPrev = wRearPrevNow;
     if (retired) { pt.rpm = Math.max(0, pt.rpm - 3000 * dt); }
     ctrl.up = false; ctrl.down = false;
 
@@ -339,11 +396,15 @@ export class Vehicle {
     for (let i = 0; i < 2; i++) {
       if (dm.wheelOff[i]) { this.wOmega[i] = 0; continue; }
       const R = C.Rw[i] * (1 - 0.1 * this.tires[i].puncture);
-      const net = -this.fxw[i] * R - 0.012 * this.fz[i] * R * 0.3 * Math.sign(this.wOmega[i]);
+      const w0 = this.wOmega[i];
+      // the brake torque belongs inside the semi-implicit update: the tyre's stiffness resists it exactly like any other torque, so a
+      // wheel that has gone past the peak is pulled back up by the tyre force instead of being 'held' by an un-resisted brake term
+      const sgn = Math.abs(w0) > 0.8 ? Math.sign(w0) : w0 / 0.8;
+      const net = -this.fxw[i] * R - 0.012 * this.fz[i] * R * 0.3 * Math.sign(w0) - brakes.torque[i] * sgn;
       const k = this.tires[i].slopeX(this.fz[i]) * R / Math.max(Math.abs(u), 3.0);
       const a = (dt * R * k) / Iw;
-      let w = this.wOmega[i] + (dt * net) / Iw / (1 + a);
-      w = this.applyBrake(w, brakes.torque[i], Iw, dt);
+      let w = w0 + (dt * net) / Iw / (1 + a);
+      if (brakes.torque[i] > 0 && w0 * w < 0) w = 0;   // a brake can stop a wheel, not reverse it
       this.wOmega[i] = w;
     }
     // rear axle (common + differential mode)
@@ -357,8 +418,9 @@ export class Vehicle {
       let tLock = clamp(K_DIFF * wd, -lockMax, lockMax);
       const driveL = axleT * 0.5 - tLock, driveR = axleT * 0.5 + tLock;
       const dL = dm.wheelOff[iL], dR = dm.wheelOff[iR];
-      const netL = dL ? 0 : driveL - this.fxw[iL] * RL;
-      const netR = dR ? 0 : driveR - this.fxw[iR] * RR;
+      const sgnL = Math.abs(wL) > 0.8 ? Math.sign(wL) : wL / 0.8, sgnR = Math.abs(wR) > 0.8 ? Math.sign(wR) : wR / 0.8;
+      const netL = dL ? 0 : driveL - this.fxw[iL] * RL - brakes.torque[iL] * sgnL;
+      const netR = dR ? 0 : driveR - this.fxw[iR] * RR - brakes.torque[iR] * sgnR;
       const kL = this.tires[iL].slopeX(this.fz[iL]) * RL / Math.max(Math.abs(u), 3.0);
       const kR = this.tires[iR].slopeX(this.fz[iR]) * RR / Math.max(Math.abs(u), 3.0);
       const Iref = pt.reflectedInertia();
@@ -372,8 +434,8 @@ export class Vehicle {
       const wdn = wd + dwd;
       let nl = wc + 0.5 * wdn, nr = wc - 0.5 * wdn;
       if (dL) nl = 0; if (dR) nr = 0;
-      nl = this.applyBrake(nl, brakes.torque[iL], Iw + Iref * 0.5, dt);
-      nr = this.applyBrake(nr, brakes.torque[iR], Iw + Iref * 0.5, dt);
+      if (brakes.torque[iL] > 0 && wL * nl < 0) nl = 0;
+      if (brakes.torque[iR] > 0 && wR * nr < 0) nr = 0;
       this.wOmega[iL] = nl; this.wOmega[iR] = nr;
     }
     for (let i = 0; i < 4; i++) this.wheelAngle[i] += this.wOmega[i] * dt;

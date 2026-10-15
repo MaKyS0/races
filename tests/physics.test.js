@@ -10,7 +10,7 @@ const ENV = { water: 0, tAir: 25, tTrack: 35, wearMult: 1 };
 const DT = 1 / 120;
 function car(opts = {}) {
   const c = new Vehicle(0);
-  c.assists.tc = opts.tc ?? 0; c.assists.abs = opts.abs ?? 0; c.assists.steer = 0;
+  c.assists.tc = opts.tc ?? 0; c.assists.abs = opts.abs ?? 0; c.assists.steer = 0; c.assists.brakeHelp = opts.brakeHelp ?? 0;   // raw physics unless a test asks for the assist
   Object.assign(c.setup, opts.setup || {}); c.applySetup();
   c.setFuel(opts.fuel ?? 50); c.fitTyres(opts.compound || 'soft', opts.temp ?? 95);
   c.place(track, opts.s ?? 5600, 0, opts.v ?? 0);
@@ -110,6 +110,22 @@ describe('vehicle dynamics', () => {
     expect(soft.t).toBeGreaterThan(dry.t);                                // brake force follows the pedal, not instantaneous
     expect(dry.dist).toBeGreaterThan(70); expect(dry.dist).toBeLessThan(200);
   });
+  it('brake-by-wire map: a full digital press brakes as hard as the tyres allow without sustained lock-ups', () => {
+    const run = (o) => {
+      const c = car({ v: o.v ?? 300 / 3.6, s: 300, brakeHelp: o.help, abs: 0 }); c.pt.gear = 8; c.ctrl.brake = 0; c.step(DT, track, { ...ENV, water: o.water || 0, forceSurface: 0 });
+      c.ctrl.brake = 1; let dist = 0, tt = 0, lock = 0;
+      while (c.speed * 3.6 > 30 && tt < 20) { c.step(DT, track, { ...ENV, water: o.water || 0, forceSurface: 0 }); dist += c.speed * DT; tt += DT; if (Math.min(...c.kappa) < -0.4) lock += DT; }
+      return { dist, lock, tt };
+    };
+    for (const v of [300 / 3.6, 150 / 3.6]) {
+      const raw = run({ help: 0, v }), bbw = run({ help: 1, v });
+      expect(bbw.lock).toBeLessThan(0.2); expect(raw.lock).toBeGreaterThan(bbw.lock + 0.2);
+      expect(bbw.dist).toBeLessThanOrEqual(raw.dist * 1.03);
+    }
+    const dry = run({ help: 1 }), wet = run({ help: 1, water: 0.6 });
+    expect(wet.dist).toBeGreaterThan(dry.dist * 1.6);      // the ceiling follows the surface: rain still lengthens braking
+    expect(dry.tt).toBeGreaterThan(1.5);                    // not instantaneous
+  });
   it('brake pressure builds progressively (no instant deceleration)', () => {
     const c = car({ v: 80, s: 300 }); c.ctrl.brake = 1; const env = { ...ENV, forceSurface: 0 };
     c.step(DT, track, env); const a0 = -c.axBody; for (let i = 0; i < 24; i++) c.step(DT, track, env);
@@ -171,9 +187,16 @@ describe('vehicle dynamics', () => {
     for (let i = 0; i < 120 * 60; i++) { if (i % 20 === 0) { c.ctrl.throttle = rnd(); c.ctrl.brake = rnd() < 0.3 ? rnd() : 0; c.ctrl.steer = rnd() * 2 - 1; c.ctrl.up = rnd() < 0.05; c.ctrl.down = rnd() < 0.05; } c.step(DT, track, ENV); }
     for (const v of [c.x, c.z, c.vx, c.vz, c.r, c.psi, c.h, ...c.fz, ...c.wOmega]) expect(Number.isFinite(v)).toBe(true);
   });
-  it('is consistent between 120 Hz and 60 Hz physics steps', () => {
-    const run = (m) => { const c = car({ tc: 1 }); c.ctrl.throttle = 1; for (let i = 0; i < 120 * 6 / m; i++) { if (i === 120 * 3 / m) { c.ctrl.throttle = 0; c.ctrl.brake = 1; } c.step(DT * m, track, ENV); } return c.distance; };
+  it('is consistent between 120 Hz and 60 Hz physics steps (rolling start, accelerate + brake)', () => {
+    const run = (m) => { const c = car({ tc: 1, v: 45 }); c.ctrl.throttle = 1; for (let i = 0; i < 120 * 6 / m; i++) { if (i === 120 * 3 / m) { c.ctrl.throttle = 0; c.ctrl.brake = 1; } c.step(DT * m, track, ENV); } return c.distance; };
     const a = run(1), b = run(2); expect(Math.abs(a - b) / a).toBeLessThan(0.03);
+  });
+  it('standing launch is grip-limited, quick and repeatable (0-100 km/h between 2.2 and 3.0 s at TC 1)', () => {
+    for (const tc of [0, 1]) {
+      const c = car({ tc, compound: 'medium', fuel: 40 }); c.setup.diffPreload = 120; c.pt.auto = true; c.ctrl.throttle = 1;
+      let t = 0, t100 = 0; for (let i = 0; i < 120 * 6 && !t100; i++) { c.step(DT, track, ENV); t += DT; if (c.speed > 27.8) t100 = t; }
+      expect(t100).toBeGreaterThan(2.0); expect(t100).toBeLessThan(3.0);
+    }
   });
   it('allocates (almost) no memory in the step loop', () => {
     const c = car({ tc: 1, v: 50 }); c.ctrl.throttle = 0.6;

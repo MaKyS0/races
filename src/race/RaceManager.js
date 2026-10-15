@@ -102,7 +102,7 @@ export class RaceManager {
       const d = new DriverInfo(idx, car, def, !!def.isPlayer);
       car.d = d; car.name = d.name;
       this.cars.push(car); this.drivers.push(d);
-      const assists = def.isPlayer ? c.assists : { abs: 0, tc: 2, steer: 0, autoGear: true };
+      const assists = def.isPlayer ? c.assists : { abs: 0, tc: 1, steer: 0, autoGear: true };
       Object.assign(car.assists, assists);
       car.setup = { ...DEFAULT_SETUP, ...(def.isPlayer ? c.setup : this.aiSetup(idx)) };
       car.wallE = tr.wallRestitution; car.wallMu = tr.wallFriction;

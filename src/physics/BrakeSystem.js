@@ -17,7 +17,10 @@ export class BrakeSystem {
     this.regenTorque = 0;      // Nm at the rear axle currently produced by the MGU-K
     this.regenComp = 0;        // lagged compensation (brake-by-wire)
     this.regenError = 0;
+    this.ceilF = 0; this.ceilR = 0;   // optional per-axle hydraulic torque ceilings (Nm, 0 = none), set by the vehicle's brake-by-wire map
+    this.limited = 0;
   }
+  setCeiling(f, r) { this.ceilF = f; this.ceilR = r; }
 
   /**
    * @param pedalIn raw 0..1 pedal   dt   wheelSlip[4] slip ratios (negative = braking slip)
@@ -32,8 +35,10 @@ export class BrakeSystem {
     if (this.pedal < 0.002 && target === 0) this.pedal = 0;
 
     const total = this.pedal * this.capacity;
-    const front = total * this.bias * 0.5;
-    const rear = total * (1 - this.bias) * 0.5;
+    let front = total * this.bias * 0.5;
+    let rear = total * (1 - this.bias) * 0.5;
+    this.limited = 0;
+    if (this.ceilF > 0) { const cf = this.ceilF * 0.5, cr = this.ceilR * 0.5; if (front > cf) { front = cf; this.limited |= 1; } if (rear > cr) { rear = cr; this.limited |= 2; } }
 
     // MGU-K regen replaces part of the rear hydraulic torque. Compensation lags -> bias wobble when regen changes.
     const wantComp = Math.min(regenAvail, rear * 2);

@@ -31,6 +31,7 @@ export class Game {
     this.audio = new AudioEngine(this.settings);
     this.hud = new HUD(root, this.settings); this.hud.setScale(this.settings.data.ui.hudScale); this.hud.show(false);
     this.touch = new TouchControls(root, this.input, this.settings);
+    this.vignette = document.createElement('div'); this.vignette.className = 'vignette'; this.vignette.style.display = 'none'; root.appendChild(this.vignette);
     this.championship = new Championship();
     this.menu = new Menu(root, this);
     this.state = 'loading';   // loading | menu | playing | paused | replay | results
@@ -38,6 +39,7 @@ export class Game {
     this.acc = 0; this.lastNow = 0; this.hudAcc = 0; this.gridTimer = 0; this.finishTimer = -1;
     this.replay = null; this.editing = false;
     this.isTouchDevice = typeof window !== 'undefined' && (('ontouchstart' in window) || navigator.maxTouchPoints > 0) && this.perf.dev.mobile;
+    if (this.isTouchDevice) this.hud.root.classList.add('touchui');   // the read-only pedal / steering telemetry would only look like touch pedals
     this.hud.onPitCompound = (c) => { if (this.rm && this.rm.player) this.rm.player.nextCompound = c; };
     window.addEventListener('resize', () => this.renderer.applyScale());
     document.addEventListener('visibilitychange', () => { if (document.hidden && this.state === 'playing') this.pause(); });
@@ -122,13 +124,11 @@ export class Game {
     this.rm = null; this.renderer.clearRace(); this.hud.show(false); this.state = 'menu';
     this.inChampionship = false; this.enterMenuScene(); this.menu.showChampionship();
   }
-  pause() { if (this.state !== 'playing') return; this.state = 'paused'; this.audio.setPaused(true); this.menu.showPause(); }
+  pause() { if (this.state !== 'playing') return; this.input.releaseAll(); this.touch.releaseAll(); this.zeroPlayerControls(); this.state = 'paused'; this.audio.setPaused(true); this.menu.showPause(); }
   resume() { if (this.state !== 'paused') return; this.menu.hide(); this.state = 'playing'; this.audio.setPaused(false); this.lastNow = performance.now(); }
   editTouchLayout() {
-    this.editing = true; this.touch.show(true); this.touch.setEditing(true);
-    const b = document.createElement('button'); b.className = 'btn primary'; b.textContent = 'Done'; b.style.cssText = 'position:absolute;left:50%;top:6%;transform:translateX(-50%);z-index:60;pointer-events:auto';
-    b.onclick = () => { b.remove(); this.touch.setEditing(false); this.touch.show(this.state === 'playing'); this.editing = false; this.menu.showSettings('touch'); };
-    this.root.appendChild(b);
+    this.editing = true;
+    this.touch.openEditor(() => { this.touch.show(this.state === 'playing'); this.editing = false; this.menu.showSettings('touch'); });
   }
 
   // ---------------------------------------------------------------- replay
@@ -223,7 +223,8 @@ export class Game {
     this.perf.endFrame(dt * 1000, cpu, this.timing.phys, this.timing.render);
     if (this.rm) this.rm.physLod = this.perf.level >= 3;   // emergency CPU relief only (thermal critical)
   }
-  frameMenu(dt) { this.renderer.updateShowroom(dt); const r0 = performance.now(); this.renderer.render(); this.timing.render = performance.now() - r0; this.timing.phys = 0; }
+  frameMenu(dt) {
+    if (this._vig) { this.vignette.style.display = 'none'; this._vig = false; } this.renderer.updateShowroom(dt); const r0 = performance.now(); this.renderer.render(); this.timing.render = performance.now() - r0; this.timing.phys = 0; }
   frameFrozen(dt) {
     const rm = this.rm; if (!rm) { this.frameMenu(dt); return; }
     const p = rm.player; const vis = this.renderer.visuals[p ? p.idx : 0];
@@ -243,12 +244,19 @@ export class Game {
     if (this.input.consume('replay') || this.input.consume('pause')) this.exitReplay();
   }
 
+  zeroPlayerControls() { const p = this.rm && this.rm.player; if (p && !p.ai) { const c = p.car.ctrl; c.throttle = 0; c.brake = 0; c.steer = 0; c.drs = false; } }
+  /** driver inputs -> car controls, advanced by exactly one fixed physics step so feel does not depend on the frame rate */
+  stepDrive() {
+    const rm = this.rm, p = rm.player; if (!p || p.ai) return;
+    const car = p.car, c = car.ctrl;
+    const st = this.input.update(PHYS_DT, car.speed);
+    const canDrive = rm.phase !== 'finished';
+    c.throttle = canDrive ? st.throttle : 0; c.brake = canDrive ? st.brake : 0.4; c.steer = canDrive ? st.steer : 0; c.drs = st.drs;
+  }
   applyPlayerInput(dt) {
     const rm = this.rm, p = rm.player; if (!p || p.ai) return;
     const inp = this.input, car = p.car, c = car.ctrl;
-    const st = inp.update(dt, car.speed);
-    const canDrive = rm.phase !== 'finished';
-    c.throttle = canDrive ? st.throttle : 0; c.brake = canDrive ? st.brake : 0.4; c.steer = canDrive ? st.steer : 0; c.drs = st.drs;
+    inp.sample();   // polled devices once per frame; the pedal / steering shaping itself runs per fixed physics step (stepDrive)
     // discrete actions
     if (inp.consume('shiftUp') && !car.assists.autoGear) c.up = true;
     if (inp.consume('shiftDown') && !car.assists.autoGear) c.down = true;
@@ -275,14 +283,15 @@ export class Game {
   framePlaying(dt, t0) {
     const rm = this.rm;
     if (this.editing) { this.frameFrozen(dt); return; }
+    if (!this._vig) { this.vignette.style.display = ''; this._vig = true; }
     this.applyPlayerInput(dt);
     // auto-begin the start procedure shortly after loading
     if (rm.phase === 'grid') { this.gridTimer += dt; if (this.gridTimer > 2.5) rm.begin(); }
     // ---- fixed-step physics with a bounded catch-up (never spiral)
     this.acc += dt;
     const ps = performance.now();
-    let steps = 0; const maxSteps = this.perf.level >= 2 ? 4 : 6;
-    while (this.acc >= PHYS_DT && steps < maxSteps) { rm.step(PHYS_DT); this.acc -= PHYS_DT; steps++; }
+    let steps = 0; const maxSteps = this.perf.level >= 2 ? 6 : 8;   // real time is kept down to 15 FPS (20 FPS when throttled); below that the simulation slows down instead of changing
+    while (this.acc >= PHYS_DT && steps < maxSteps) { this.stepDrive(); rm.step(PHYS_DT); this.acc -= PHYS_DT; steps++; }
     if (steps === maxSteps) this.acc = Math.min(this.acc, PHYS_DT);
     this.timing.phys = performance.now() - ps;
     this.handleEvents(rm, dt);
@@ -302,6 +311,7 @@ export class Game {
     if (player) {
       this.blueT += dt;
       if (this.blueT > 0.4) { this.blueT = 0; this.blueFlag = this.computeBlue(rm, player); }
+      if ((this.perf.frames & 7) === 0) this.vignette.style.opacity = (0.5 + 0.4 * Math.min(1, rm.player.car.speed / 90)).toFixed(2);
       this.hud.update(rm, dt, this.input, this.perf, { blueFlag: this.blueFlag, fps: this.settings.data.ui.fps });
     }
     this.audio.update(dt, rm, this.renderer.camera, car);

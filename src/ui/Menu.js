@@ -283,14 +283,14 @@ export class Menu {
     } else {
       const C = D.controls, T = D.touch;
       body.append(
-        this.select('Steering style', [['wheel', 'Virtual wheel'], ['buttons', 'Left / right buttons']], () => C.touchMode, (v) => { C.touchMode = v; this.game.touch.apply(); }),
+        this.select('Steering style', [['buttons', 'Left / right buttons (digital)'], ['wheel', 'Virtual wheel (analog, drag)']], () => C.touchMode, (v) => { C.touchMode = v; this.game.touch.apply(); }),
         this.toggle('Tilt steering (gyro)', () => C.tilt, (v) => { C.tilt = v; if (v) this.game.input.enableTilt(); this.game.touch.apply(); }),
         this.slider('Control opacity', 0.15, 1, 0.05, () => T.opacity, (v) => { T.opacity = v; this.game.touch.apply(); }, (v) => Math.round(v * 100) + '%'),
         this.slider('Control size', 0.6, 1.5, 0.05, () => T.scale, (v) => { T.scale = v; this.game.touch.apply(); }, (v) => v.toFixed(2)),
       );
       const row = el('div', 'row');
-      row.append(this.btn('Edit layout (drag controls, Shift/Alt-drag to resize)', () => { this.hide(); this.game.editTouchLayout(); }, 'small'), this.btn('Reset layout', () => { this.game.touch.resetLayout(); this.toast('Layout reset'); }, 'small'));
-      body.append(row, el('div', 'sub', 'On touch devices the controls appear automatically in landscape. External gamepads work through the Gamepad API.'));
+      row.append(this.btn('Edit layout (move / resize / opacity per button)', () => { this.hide(); this.game.editTouchLayout(); }, 'small'), this.btn('Reset layout', () => { this.game.touch.resetLayout(); this.toast('Layout reset'); }, 'small'));
+      body.append(row, el('div', 'sub', 'GAS (bottom right) and BRAKE (left of it) are plain hold-buttons; steering is on the left. All buttons work at the same time (multi-touch). External gamepads work through the Gamepad API.'));
     }
     const f = el('div', 'footer'); f.append(this.btn('◀ Back', () => { this.settings.save(); this.game.input.rebuildKeymap(); this.game.hud.setScale(D.ui.hudScale); if (back) back(); else this.showMain(); }, 'small')); s.appendChild(f);
   }

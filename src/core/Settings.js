@@ -23,7 +23,7 @@ export const DEFAULTS = {
   audio: { master: 0.8, engine: 0.9, effects: 0.8 },
   controls: {
     steerSensitivity: 1, steerLinearity: 1.25, throttleLinearity: 1, brakeLinearity: 1.1, deadzone: 0.08,
-    keyboardSteerRate: 2.6, steerAssistKeyboard: true, touchMode: 'wheel', tilt: false, haptics: true,
+    keyboardSteerRate: 2.6, steerAssistKeyboard: true, touchMode: 'buttons', tilt: false, haptics: true,
   },
   keys: DEFAULT_KEYS,
   assists: { abs: 0, tc: 1, steer: 1, autoGear: true, pitLimiter: true, racingLine: false },
@@ -32,7 +32,7 @@ export const DEFAULTS = {
     wear: 2, formationLap: false, safetyCar: 'auto', qualiMinutes: 6, practiceMinutes: 10, camera: 'chase', damage: true, penalties: true,
   },
   setup: { frontWing: 5, rearWing: 5, brakeBias: 0.575, diffPreload: 120, diffPower: 0.35, engineBraking: 0.7 },
-  touch: { opacity: 0.55, scale: 1, layout: null },
+  touch: { opacity: 0.6, scale: 1, layout: null, layoutV: 0 },
   ui: { fps: false, hudScale: 1, minimap: true, timing: true, units: 'kmh' },
   records: {},
 };

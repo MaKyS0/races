@@ -35,7 +35,7 @@ export class TrackMesh {
     this.theme = track.def.theme || {};
     const th = this.theme;
     this.pal = {
-      asphalt: col(0x38393c), asphaltDark: col(0x2a2b2e), runoff: col(0x4b4d52), pit: col(0x3d3f44), white: col(0xe9e9e6), yellow: col(0xe8c21a),
+      asphalt: col(0x74757a), asphaltDark: col(0x45464a), runoff: col(0x8d8f95), pit: col(0x76787d), white: col(0xe9e9e6), yellow: col(0xe8c21a),
       gravel: col(th.desert ? 0xcbb283 : 0xb7a37c), sand: col(0xd6bd86),
       grass: col(th.grass ?? 0x3f7a35), grass2: mix(col(th.grass ?? 0x3f7a35), col(0x24401f), 0.4), grass3: mix(col(th.grass ?? 0x3f7a35), col(0x6e8f54), 0.35),
       kerbBase: col(0x555557), wallTop: col(0xcfcfcf),
@@ -95,12 +95,19 @@ export class TrackMesh {
     for (let k = R.length - 1; k >= 0; k--) pts.push(R[k]);
     const wl = t.wl[i], wr = t.wr[i], line = t.line[i];
     const K = 8;
+    // low-frequency wear / repair patches along the lap and a lighter, cleaner outer lane; the rubbered line stays the darkest part
+    const sS = i * t.ds, patch = 1 + 0.07 * Math.sin(sS * 0.021 + 1.3) * Math.sin(sS * 0.0073) + 0.04 * Math.sin(sS * 0.17);
     for (let k = 1; k < K; k++) {
       const n = -wr + 0.22 + ((wl + wr - 0.44) * k) / K;
-      const d = (n - line) / 1.4;
-      pts.push([n, 0, mix(this.pal.asphalt, this.pal.asphaltDark, Math.exp(-d * d) * 0.85)]);
+      const d = (n - line) / 1.4, d2 = (n - line) / 3.6;
+      const base = mix(this.pal.asphalt, this.pal.asphaltDark, Math.exp(-d * d) * 0.85 + Math.exp(-d2 * d2) * 0.18);
+      pts.push([n, 0, [base[0] * patch, base[1] * patch, base[2] * patch]]);
     }
     for (let k = 0; k < L.length; k++) pts.push(L[k]);
+    // mown-grass stripes (alternate every ~24 m) on every grass-coloured vertex
+    const stripe = ((sS / 24) | 0) & 1 ? 1.07 : 0.93;
+    const G1 = this.pal.grass, G2 = this.pal.grass2, G3 = this.pal.grass3;
+    for (const q of pts) { const c = q[2]; if (c === G1 || c === G2 || c === G3) q[2] = [c[0] * stripe, c[1] * stripe, c[2] * stripe]; }
     pts.wallL = L.wallN; pts.wallR = R.wallN;
     return pts;
   }
