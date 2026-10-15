@@ -298,6 +298,19 @@ export class DriverAI {
         if (toOut > 0 && toOut < 70) { vt = Math.min(vt, Math.max(0, Math.sqrt(2 * 8 * Math.max(0, toOut - 12)))); if (speed < 3) this.exitWait += dt; }
       }
     }
+    // queue in the pit lane: never run into the car in front (the normal following law is switched off in pit mode). Cars
+    // working at their box are stopped obstacles; the lane is one car wide, so a queue forms behind them.
+    if (pitMode && car.inPit) {
+      for (let q = 0; q < ctx.nNear; q++) {
+        const o = ctx.near[q];
+        if (o === car || !o.inPit || Math.abs(o.loc.n - myN) > 2.6) continue;
+        const gap = tr.delta(loc.s, o.loc.s) - 5.9;
+        if (gap < -4 || gap > 70) continue;
+        vt = Math.min(vt, Math.sqrt(o.speed * o.speed + 2 * 4 * Math.max(0, gap - 1.2)));
+      }
+    }
+    // passed my own box without stopping (it was blocked): do not wait for it forever - leave, and come back next lap
+    if (pit.state === PIT.TOBOX && tr.delta(loc.s, boxS) < -8) pit.state = PIT.EXIT;
     if (this.holdPit) vt = 0;
     // off-track recovery: crawl back
     const edge = myN >= 0 ? tr.wl[i] : tr.wr[i];

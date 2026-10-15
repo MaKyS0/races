@@ -172,3 +172,21 @@ describe('sessions', () => {
     expect(serious).toBeLessThan(3);
   }, 60000);
 });
+
+describe('pit lane (regressions)', () => {
+  it('every car in a race has its own pit box (it used to be box 0 for all of them)', () => {
+    const rm = new RaceManager({ trackId: 'monaco', mode: MODE.RACE, laps: 3, aiCount: 15, autopilotPlayer: true, seed: 1 });
+    rm.begin();
+    const boxes = rm.drivers.map((d) => d.box);
+    expect(new Set(boxes).size).toBe(boxes.length);
+  });
+  it('a pit-lane queue does not turn into a pile of contacts (Monaco, 16 cars, everyone calls for a stop on lap 1)', () => {
+    const rm = new RaceManager({ trackId: 'monaco', mode: MODE.RACE, laps: 3, aiCount: 15, autopilotPlayer: true, seed: 2, wearMult: 1 });
+    rm.begin(); let impacts = 0;
+    while (rm.simTime < 200 && rm.phase !== 'finished') { rm.step(PHYS_DT); for (const e of rm.events) if (e.type === 'impact') impacts++; rm.events.length = 0; }
+    expect(impacts).toBeLessThan(1000);   // was ~8000 (cars pushing each other at the pit exit)
+    // nobody is parked beyond their own box waiting for it
+    const stuck = rm.drivers.filter((d) => d.ai && d.ai.pit.state === 2 && rm.track.delta(d.car.loc.s, rm.track.pitBoxes[d.box].s) < -8);
+    expect(stuck.length).toBe(0);
+  }, 60000);
+});

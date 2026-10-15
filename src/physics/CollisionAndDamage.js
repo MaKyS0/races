@@ -296,7 +296,7 @@ export class CollisionSystem {
     const wheelZone = Math.abs(ly) > 0.55;
     if (front) {
       // front wing: distribute by lateral position; an end-plate strike hurts one half
-      const amount = clamp(eff / 6800, 0, 1.4);
+      const amount = clamp(eff / 10000, 0, 1.4);
       const wl = clamp(0.5 + ly * 0.45, 0, 1), wr = 1 - wl;
       const prevL = dm.fwL, prevR = dm.fwR;
       dm.fwL = clamp(dm.fwL + amount * (0.35 + wl), 0, 1);

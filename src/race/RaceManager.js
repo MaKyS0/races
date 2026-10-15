@@ -143,6 +143,7 @@ export class RaceManager {
     this.drivers.forEach((d, i) => {
       const car = d.car;
       d.reset();
+      d.box = i % this.track.pitBoxes.length;   // every car has its own box (reset() leaves it 0 -> in a race all cars queued for box 0)
       const comp = mode === MODE.RACE || mode === MODE.TIME_TRIAL || true ? startComp(d) : 'medium';
       car.fitTyres(comp, mode === MODE.RACE ? 80 : 70);
       car.wearMult = c.wearMult;
@@ -927,7 +928,7 @@ export class RaceManager {
     else if (comp === 'inter' && (w > 0.55 || w < 0.05)) { want = true; next = w > 0.55 ? 'wet' : 'medium'; }
     else if (comp === 'wet' && w < 0.3) { want = true; next = w < 0.1 ? 'medium' : 'inter'; }
     else if (avgWear > wearLimit && remaining > 1) { want = true; next = w > 0.12 ? 'inter' : (comp === 'soft' ? 'hard' : 'medium'); }
-    else if ((dm.fwL + dm.fwR > 0.55 || dm.rw > 0.5 || dm.floor > 0.5) && remaining > 1) { want = true; next = d.nextCompound; }
+    else if ((dm.fwL + dm.fwR > 0.8 || dm.rw > 0.5 || dm.floor > 0.5) && remaining > 1) { want = true; next = d.nextCompound; }
     else if (car.tires.some((t) => t.puncture > 0.4) && remaining > 1) { want = true; }
     if (d.forcePit) { want = true; next = d.nextCompound; }
     if (want && d.pitStops < 4 && !d.service && this.simTime - d.lastStop > 25 && !this.sc) { ai.pit.want = true; ai.pit.box = d.box; d.wantPit = true; d.nextCompound = next; }
