@@ -159,7 +159,7 @@ export class Renderer3D {
   setCars(rm) {
     for (const v of this.visuals) this.raceGroup.remove(v.root);
     this.visuals = rm.cars.map((car) => {
-      const v = new CarVisual(car.d.def.team, this.qname === 'low' ? 'low' : 'std', { lod: 1 });
+      const v = new CarVisual(car.d.def.team, this.qname, { lod: 1, number: car.d.number });
       this.raceGroup.add(v.root); return v;
     });
     // contact shadows
@@ -325,7 +325,7 @@ export class Renderer3D {
     const floor = new THREE.Mesh(new THREE.CircleGeometry(60, 48), new THREE.MeshStandardMaterial({ color: 0x1d2027, roughness: 0.85 })); floor.rotation.x = -Math.PI / 2; floor.position.y = -0.3; root.add(floor);
     const rim1 = new THREE.PointLight(0xff3b30, 40, 14), rim2 = new THREE.PointLight(0x3b8bff, 34, 14);
     rim1.position.set(-5, 2.5, -3); rim2.position.set(5, 2, -4); root.add(rim1, rim2);
-    const car = new CarVisual(teamIdx, this.qname === 'low' ? 'low' : 'std', { lod: 0 });
+    const car = new CarVisual(teamIdx, this.qname, { lod: 0, number: 1 });
     car.root.position.set(0, 0.0, 0); root.add(car.root);
     car.body.updateMatrixWorld(true);
     // static wheel colours for the preview
@@ -336,7 +336,7 @@ export class Renderer3D {
     this.sun.intensity = 2.0; this.hemi.intensity = 0.6;
     this.sun.position.set(6, 10, 4); this.sun.target.position.set(0, 0, 0);
   }
-  setShowroomTeam(idx) { if (this.showroom && this.showroom.team !== idx) { const s = this.showroom; s.root.remove(s.car.root); s.car = new CarVisual(idx, this.qname === 'low' ? 'low' : 'std', { lod: 0 }); s.root.add(s.car.root); s.team = idx; } }
+  setShowroomTeam(idx) { if (this.showroom && this.showroom.team !== idx) { const s = this.showroom; s.root.remove(s.car.root); s.car = new CarVisual(idx, this.qname, { lod: 0, number: 1 }); s.root.add(s.car.root); s.team = idx; } }
   updateShowroom(dt) {
     const s = this.showroom; if (!s) return;
     s.t += dt;

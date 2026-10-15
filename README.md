@@ -83,7 +83,7 @@ src/track/     Turtle (геометрия), TrackSystem (сечение, выс�
 src/ai/        OpponentAI (DriverAI), SpeedProfile
 src/race/      RaceManager (правила, флаги, SC/VSC, пит-стопы, сессии), Roster, Championship
 src/weather/   WeatherSystem
-src/render/    Renderer, TrackMesh, Decor, CarModel, Effects, Sky, Textures, CameraController
+src/render/    Renderer, TrackMesh, Decor, CarModel + CarParts (детальная модель болида), Effects, Sky, Textures, CameraController
 src/ui/        HUD, Menu, TouchControls, style.css
 src/core/      Settings, Input, Perf, math
 src/audio/     AudioEngine (звук), EngineBank (слои петель реальных записей двигателей F1)
