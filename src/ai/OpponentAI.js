@@ -61,7 +61,7 @@ export class DriverAI {
     let pitMode = pit.state !== PIT.NONE;
     if (!pitMode && pit.want && !this.holdPit) {
       const toIn = tr.delta(loc.s, tr.pitInS - 40);
-      if (toIn >= 0 && toIn < 260) { pit.state = PIT.ENTRY; pitMode = true; }
+      if (toIn >= 0 && toIn < 380) { pit.state = PIT.ENTRY; pitMode = true; }
     }
     let boxS = 0;
     if (pitMode) {
@@ -283,7 +283,7 @@ export class DriverAI {
     this.limiterLane = false;
     if (pitMode) {
       const toLimitPoint = tr.delta(loc.s, tr.pitInS + 20);
-      if (toLimitPoint > 0 && pit.state === PIT.ENTRY) vt = Math.min(vt, Math.sqrt(lim * lim + 2 * 22 * toLimitPoint));
+      if (toLimitPoint > 0 && pit.state === PIT.ENTRY) vt = Math.min(vt, Math.sqrt(lim * lim + 2 * 10 * toLimitPoint));   // 10 m/s2: what the AI's brake envelope can really deliver (the old 22 was never reachable -> arrived too fast, wall / speeding)
       else { vt = Math.min(vt, lim * 0.97); this.limiterLane = true; }
       if (pit.state === PIT.TOBOX || (pit.state === PIT.ENTRY && car.inPit)) {
         const toBox = tr.delta(loc.s, boxS);
