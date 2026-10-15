@@ -1,0 +1,27 @@
+// UI flow smoke test: menu -> quick race -> pause -> resume -> replay -> exit -> results (via finishSession)
+import { launch } from './browser.mjs';
+const b = await launch(); const p = await b.newPage({ viewport: { width: 960, height: 540 } });
+const errs = [];
+p.on('pageerror', (e) => { errs.push(e.message); console.log('[pageerror]', e.message, (e.stack || '').split('\n').slice(0, 3).join(' | ')); });
+p.on('console', (m) => { if (m.type() === 'error') { errs.push(m.text()); console.log('[error]', m.text().slice(0, 300)); } });
+await p.goto('http://localhost:4173/?quality=low'); await p.waitForTimeout(2500);
+const frames = () => p.evaluate(() => window.__game.perf.frames);
+const waitFrames = async (n) => { const f = await frames(); await p.waitForFunction((x) => window.__game.perf.frames > x, f + n, { timeout: 120000 }); };
+await p.evaluate(() => { const s = window.__game.settings.data.game; s.aiCount = 5; s.laps = 2; s.trackId = 'monaco'; });
+await p.click('text=Quick race'); await p.waitForFunction(() => window.__game.state === 'playing', null, { timeout: 120000 });
+console.log('playing', await p.evaluate(() => window.__game.rm.cfg.trackId));
+await p.keyboard.press('Escape'); await p.waitForTimeout(400);
+console.log('paused', await p.evaluate(() => window.__game.state));
+await p.click('text=Resume'); await p.waitForTimeout(300);
+console.log('resumed', await p.evaluate(() => window.__game.state));
+await p.evaluate(() => window.__game.fastForward(40)); await waitFrames(2);
+await p.keyboard.press('KeyV'); await p.waitForTimeout(500); await waitFrames(3);
+console.log('replay', await p.evaluate(() => window.__game.state), await p.evaluate(() => window.__game.replay && window.__game.replay.dur));
+await p.screenshot({ path: 'build-output/flow-replay.png' });
+await p.click('text=Exit'); await p.waitForTimeout(300);
+console.log('after replay', await p.evaluate(() => window.__game.state));
+await p.evaluate(() => { const g = window.__game; g.rm.finishSession(); }); await waitFrames(4); await p.waitForTimeout(3500);
+console.log('results', await p.evaluate(() => window.__game.state));
+await p.screenshot({ path: 'build-output/flow-results.png' });
+console.log(errs.length ? 'ERRORS ' + errs.length : 'FLOW OK');
+await b.close();

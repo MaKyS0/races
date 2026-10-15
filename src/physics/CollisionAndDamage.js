@@ -27,6 +27,7 @@ export class CollisionSystem {
     this.corners = new Float64Array(8);
     this.rng = Math.random;
     this.pairCount = 0;
+    this.damageEnabled = true;
   }
 
   ev() { const e = this.pool[this.poolIdx++ % this.pool.length]; this.events.push(e); e.partLost = ''; e.striker = null; e.wall = false; e.b = null; return e; }
@@ -280,6 +281,7 @@ export class CollisionSystem {
 
   // ------------------------------------------------------------------- damage model
   applyDamage(c, lx, ly, energy, ev) {
+    if (!this.damageEnabled) return;
     const dm = c.damage;
     const E0 = 700;
     if (energy < E0) return;

@@ -288,8 +288,8 @@ export class RaceManager {
     this.weather.env(this.env);
     this.ctx.wetness = this.weather.water;
     const phase = this.phase;
-    if (phase === 'grid') { this.stepWorld(dt); return; }
-    if (phase === 'lights') { this.stepLights(dt); this.stepWorld(dt); return; }
+    if (phase === 'grid') { if ((this.tick & 31) === 0) this.updateOrder(); this.stepWorld(dt); return; }
+    if (phase === 'lights') { this.stepLights(dt); if ((this.tick & 31) === 0) this.updateOrder(); this.stepWorld(dt); return; }
     if (phase === 'formation') { this.stepFormation(dt); }
     if (phase === 'finished') { this.stepWorld(dt); return; }
     if (phase === 'racing' || phase === 'session' || phase === 'formation' || phase === 'finishing') {
@@ -527,7 +527,22 @@ export class RaceManager {
         else if (d.prevS < s2 && s >= s2 && dl > 0) this.sectorCrossed(d, 1, t);
       }
       d.prevS = s;
+      if (d.isPlayer) this.recordPlayerTrace(d, s, t);
     }
+  }
+  /** delta-to-best trace (every 20 m) and the time-trial ghost (30 Hz) */
+  recordPlayerTrace(d, s, t) {
+    const B = Math.floor(s / 20);
+    if (!d.trace) { d.trace = new Float32Array(Math.ceil(this.track.length / 20) + 2); d.bestTrace = null; d.lastBucket = -1; d.delta = 0; }
+    if (B !== d.lastBucket) {
+      d.lastBucket = B;
+      if (this.cfg.mode === MODE.RACE || d.timing) {
+        const lt = t - d.lapStart;
+        d.trace[B] = lt;
+        if (d.bestTrace && d.bestTrace[B] > 0) d.delta = lt - d.bestTrace[B];
+      }
+    }
+    if (this.cfg.mode === MODE.TIME_TRIAL && d.timing && (this.tick & 3) === 0) this.ghost.rec.push(d.car.x, d.car.z, d.car.psi);
   }
   sectorCrossed(d, idx, t) {
     if (!d.timing && this.cfg.mode !== MODE.RACE) return;
@@ -576,6 +591,7 @@ export class RaceManager {
     d.lastSectors = d.curSectors.slice();
     if (valid && lt < d.best) {
       d.best = lt;
+      if (d.isPlayer && d.trace) { d.bestTrace = d.trace.slice(); }
       if (lt < this.bestLapOverall) {
         this.bestLapOverall = lt; this.bestLapDriver = d;
         this.events.push({ type: 'bestLap', driver: d, time: lt });

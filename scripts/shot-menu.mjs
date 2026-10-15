@@ -1,0 +1,14 @@
+import { launch } from './browser.mjs';
+const b = await launch(); const p = await b.newPage({ viewport: { width: 1100, height: 620 } });
+p.on('pageerror', (e) => console.log('[pageerror]', e.message, (e.stack || '').split('\n')[1]));
+p.on('console', (m) => { if (['error'].includes(m.type())) console.log('[error]', m.text().slice(0, 300)); });
+await p.goto('http://localhost:4173/?quality=low'); await p.waitForTimeout(4000);
+const shot = async (name) => { const f0 = await p.evaluate(() => window.__game.perf.frames); await p.waitForFunction((f) => window.__game.perf.frames > f + 2, f0, { timeout: 60000 }); await p.screenshot({ path: `build-output/menu-${name}.png` }); };
+await shot('main');
+await p.click('text=Game modes & session setup'); await p.waitForTimeout(1500); await shot('setup');
+await p.click('text=Team & car'); await p.waitForTimeout(500); await shot('car');
+await p.click('text=Race rules'); await p.waitForTimeout(300); await shot('rules');
+await p.click('text=Back'); await p.waitForTimeout(300);
+await p.click('text=Settings · graphics & audio'); await p.waitForTimeout(500); await shot('settings');
+await p.click('text=Controls'); await p.waitForTimeout(300); await shot('controls');
+await b.close();
