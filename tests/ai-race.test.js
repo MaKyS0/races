@@ -115,3 +115,40 @@ describe('RaceManager', () => {
     expect(perStep).toBeLessThan(1.2);   // ms per 1/120 s step for 20 cars on a dev box; mobile budget is 8.3 ms
   });
 });
+
+describe('traffic behaviour (regression for multi-car robustness)', () => {
+  for (const [track, seeds] of [['silverstone', [2, 3, 4]], ['monza', [1, 3, 5]]]) {
+    it(`a 12-car field races ${track} (3 seeds) with few retirements and few serious contacts`, () => {
+      let dnf = 0, serious = 0, finished = 0;
+      for (const seed of seeds) {
+        const rm = new RaceManager({ trackId: track, mode: MODE.RACE, laps: 2, aiCount: 11, difficulty: 'pro', autopilotPlayer: true, seed, wearMult: 3 });
+        rm.begin();
+        while (rm.phase !== 'finished' && rm.simTime < 420) {
+          rm.step(PHYS_DT);
+          for (const e of rm.events) if (e.type === 'impact' && e.energy > 25000) serious++;
+          rm.events.length = 0;
+        }
+        expect(rm.phase).toBe('finished');
+        dnf += rm.drivers.filter((d) => d.status === 'dnf').length; finished += rm.drivers.filter((d) => d.status === 'finished').length;
+      }
+      expect(dnf).toBeLessThanOrEqual(7);          // of 36 starters (was ~15+ before the traffic work)
+      expect(finished).toBeGreaterThanOrEqual(28);
+      expect(serious).toBeLessThan(45);
+    }, 60000);
+  }
+  it('wing damage slows an AI car (pace follows the remaining downforce)', () => {
+    const rm = new RaceManager({ trackId: 'monza', mode: MODE.RACE, laps: 2, aiCount: 1, seed: 1, autopilotPlayer: true });
+    const car = rm.cars[1]; const clean = rm.paceLoss(car);
+    car.damage.fwL = 1; car.damage.fwR = 1; const nose = rm.paceLoss(car);
+    car.damage.rw = 1; const both = rm.paceLoss(car);
+    expect(nose).toBeLessThan(clean * 0.95); expect(both).toBeLessThanOrEqual(nose);
+    car.damage.fwL = 0; car.damage.fwR = 0; const tail = rm.paceLoss(car);   // rear wing alone also costs pace
+    expect(tail).toBeLessThan(clean * 0.97);
+  });
+  it('pit lane entry is open on narrow circuits (Monaco AI can reach its box and be serviced)', () => {
+    const rm = new RaceManager({ trackId: 'monaco', mode: MODE.RACE, laps: 4, aiCount: 2, seed: 3, autopilotPlayer: true, safetyCar: 'off', wearMult: 3 });
+    rm.begin(); const d = rm.drivers[1]; let hit = false;
+    while (rm.simTime < 200 && d.pitStops === 0) { rm.step(PHYS_DT); if (!hit && rm.simTime > 20) { d.car.damage.fwL = 1; d.car.damage.fwR = 1; hit = true; } }
+    expect(d.pitStops).toBeGreaterThanOrEqual(1);
+  });
+});

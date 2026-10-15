@@ -296,7 +296,7 @@ export class CollisionSystem {
     const wheelZone = Math.abs(ly) > 0.55;
     if (front) {
       // front wing: distribute by lateral position; an end-plate strike hurts one half
-      const amount = clamp(eff / 5200, 0, 1.4);
+      const amount = clamp(eff / 6800, 0, 1.4);
       const wl = clamp(0.5 + ly * 0.45, 0, 1), wr = 1 - wl;
       const prevL = dm.fwL, prevR = dm.fwR;
       dm.fwL = clamp(dm.fwL + amount * (0.35 + wl), 0, 1);
@@ -305,7 +305,7 @@ export class CollisionSystem {
       if (prevR < 0.9 && dm.fwR >= 0.9) lost('front wing (right)');
       if (wheelZone && eff > 3500) this.hitCorner(c, sideL ? 0 : 1, eff * 0.7, ev, lost);
     } else if (rear) {
-      const amount = clamp(eff / 5600, 0, 1.4);
+      const amount = clamp(eff / 7800, 0, 1.4);
       const prev = dm.rw;
       dm.rw = clamp(dm.rw + amount, 0, 1);
       dm.floor = clamp(dm.floor + amount * 0.35, 0, 1);
@@ -336,7 +336,7 @@ export class CollisionSystem {
   hitCorner(c, i, eff, ev, lost) {
     const dm = c.damage;
     const before = dm.sus[i];
-    dm.sus[i] = clamp(dm.sus[i] + eff / 52000, 0, 1);
+    dm.sus[i] = clamp(dm.sus[i] + eff / 72000, 0, 1);
     // tyre puncture chance grows with energy
     const pP = clamp((eff - 4000) / 30000, 0, 0.95);
     if (!dm.tyrePunct[i] && this.rng() < pP) { dm.tyrePunct[i] = 1; c.tires[i].leak = 0.05 + this.rng() * 0.18; }

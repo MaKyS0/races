@@ -62,6 +62,7 @@ export class RaceManager {
     this.weather.env(this.env);
     this.collision = new CollisionSystem();
     this.collision.rng = this.rng;
+    this.physLod = false;
     this.cars = []; this.drivers = []; this.byS = []; this.order = [];
     this.messages = []; this.events = [];
     this.time = 0; this.simTime = 0; this.tick = 0; this.phase = 'init';
@@ -71,7 +72,7 @@ export class RaceManager {
     this.bestLapOverall = Infinity; this.bestLapDriver = null; this.bestSectorsOverall = [Infinity, Infinity, Infinity];
     this.totalLaps = c.mode === MODE.RACE ? c.laps : 0;
     this.classification = null; this.finishedCount = 0;
-    this.ctx = { race: true, ahead: null, aheadGap: 999, behind: null, behindGap: 999, neighbors: [], nNeighbors: 0, grip: 1, paceLoss: null, sc: false, vsc: false, errors: true, wetness: 0, yellowNear: null, noPass: false, scSpeed: null };
+    this.ctx = { race: true, ahead: null, aheadGap: 999, behind: null, behindGap: 999, neighbors: [], nNeighbors: 0, near: [], nNear: 0, grip: 1, paceLoss: null, sc: false, vsc: false, errors: true, pitExitBusy: false, wetness: 0, yellowNear: null, noPass: false, scSpeed: null };
     this.ctx.paceLoss = (car) => this.paceLoss(car);
     this.ctx.scSpeed = (car) => this.scSpeedFor(car);
     this.ctx.yellowNear = (s) => this.inYellow(s);
@@ -251,6 +252,19 @@ export class RaceManager {
     }
     return false;
   }
+  /** speed factor from the axle that lost the most vertical load at a reference speed (damaged wings / floor); 1 when intact */
+  aeroGripFactor(car) {
+    const dm = car.damage, a = car.aero, st = a.setup;
+    const fwd = dm.fwL + dm.fwR;
+    if (fwd + dm.rw + dm.floor < 0.02) return 1;
+    const fw0 = 0.35 + 0.075 * st.frontWing, rw0 = 0.45 + 0.085 * st.rearWing;
+    const fm = (1 - 0.8 * dm.floor) * (1 - 0.12 * fwd);
+    const claF0 = fw0 + 0.88, claR0 = rw0 + 1.6;
+    const claF = fw0 * Math.max(0, 1 - 0.5 * fwd) + 0.88 * fm, claR = rw0 * (1 - dm.rw) + 1.6 * fm;
+    const q = 1815, W = car.mass * 9.81, Wf = W * CAR.b / (CAR.a + CAR.b), Wr = W - Wf;
+    const rF = (Wf + q * claF) / (Wf + q * claF0), rR = (Wr + q * claR) / (Wr + q * claR0);
+    return Math.sqrt(clamp(Math.min(rF, rR), 0.3, 1));
+  }
   paceLoss(car) {
     // grip of the current tyres relative to fresh warm tyres (+ damage); pace scales with sqrt(grip)
     let g = 0;
@@ -262,7 +276,7 @@ export class RaceManager {
     g *= 0.25;
     const dm = car.damage;
     let pl = Math.sqrt(clamp(g / 0.985, 0.35, 1));
-    pl *= 1 - 0.20 * (dm.fwL + dm.fwR) * 0.5 - 0.08 * dm.rw - 0.1 * Math.max(dm.sus[0], dm.sus[1], dm.sus[2], dm.sus[3]);
+    pl *= this.aeroGripFactor(car) * (1 - 0.1 * Math.max(dm.sus[0], dm.sus[1], dm.sus[2], dm.sus[3]));
     // aquaplaning risk: slow down in standing water at high speed
     if (w > 0.3) pl *= 1 - 0.12 * (w - 0.3);
     return pl;
@@ -363,6 +377,12 @@ export class RaceManager {
     const doAI = (this.tick & 1) === 0;
     const racing = this.phase === 'racing' || this.phase === 'formation' || this.phase === 'session';
     ctx.sc = !!this.sc; ctx.vsc = this.vsc; ctx.errors = this.cfg.mode === MODE.RACE;
+    // pit exit light: red while a fast car is within ~3 s of the end of the pit lane
+    ctx.pitExitBusy = false;
+    for (let q = 0; q < n && !ctx.pitExitBusy; q++) {
+      const o = cars[q]; if (o.inPit || o.retired || o.removed || o.speed < 30) continue;
+      const g = tr.delta(o.loc.s, tr.pitOutS); if (g > 0 && g < 60 + o.speed * 3) ctx.pitExitBusy = true;
+    }
     for (let k = 0; k < n; k++) {
       const car = by[k], d = car.d;
       if (!d.ai || car.removed) continue;
@@ -399,7 +419,9 @@ export class RaceManager {
       }
       if (this.phase === 'racing' && this.cfg.mode === MODE.RACE && false) lod = 0;
       car.lod = lod;
-      const step = lod === 0 ? 1 : 2; // coarser steps for distant cars (2x is the stability limit of the suspension/tyre integrators)
+      // Full-rate physics for everybody (coarser 2x steps visibly change handling: more spins). Coarsening is only an emergency
+      // measure for the thermal / frame-time governor (physLod) and is limited to cars that are far from the camera.
+      const step = this.physLod && lod > 0 ? 2 : 1;
       if (step === 1 || ((this.tick + i) % step) === 0) car.step(dt * step, tr, this.env);
       car.pt.auto = car.assists.autoGear;
     }
@@ -421,7 +443,7 @@ export class RaceManager {
       const c2 = by[(k + o) % n];
       if (c2 === car || c2.removed) continue;
       const g = tr.delta(car.loc.s, c2.loc.s);
-      if (g < 0 || g > 140) break;
+      if (g < 0 || g > 230) break;
       if (c2.inPit !== car.inPit) continue;
       if (Math.abs(c2.loc.n - car.loc.n) < 2.6) { ctx.ahead = c2; ctx.aheadGap = Math.max(0, g - 5); fb = null; break; }
       if (!fb) { fb = c2; fbG = Math.max(0, g - 5); }
@@ -441,7 +463,16 @@ export class RaceManager {
       if (c2 === car || c2.removed) continue;
       if (Math.abs(tr.delta(car.loc.s, c2.loc.s)) < 9) ctx.neighbors[ctx.nNeighbors++] = c2;
     }
-    ctx.noPass = !!this.sc || d.ai.noPassForm || this.flag === 'yellowfull' || (this.cfg.mode !== MODE.RACE && false);
+    // everything within ~75 m along the lap (stopped wrecks included) for the AI's time-to-collision layer
+    ctx.nNear = 0;
+    for (let o = -6; o <= 6; o++) {
+      if (o === 0) continue;
+      const c2 = by[(k + o + n * 4) % n];
+      if (c2 === car || c2.removed || c2.inPit !== car.inPit) continue;
+      const g2 = tr.delta(car.loc.s, c2.loc.s);
+      if (g2 > -12 && g2 < 75 && ctx.nNear < 10) ctx.near[ctx.nNear++] = c2;
+    }
+    ctx.noPass = !!this.sc || (this.cfg.mode === MODE.RACE && this.raceStarted && this.time < 35) || d.ai.noPassForm || this.flag === 'yellowfull' || (this.cfg.mode !== MODE.RACE && false);
     // lapped cars let faster cars through (blue flag): stay off the racing line
     ctx.race = this.cfg.mode === MODE.RACE || true;
     // practice/quali: out/in laps and traffic management handled via pace in qualiProgram
@@ -740,7 +771,7 @@ export class RaceManager {
         const ds = tr.delta(loc.s, box.s);
         const idx = loc.i;
         const nBox = tr.pitLaneN(idx, 'box');
-        if (Math.abs(ds) < 3.2 && Math.abs(loc.n - nBox) < 3.2 && car.speed < 0.7) this.startService(d);
+        if (Math.abs(ds) < 5.5 && Math.abs(loc.n - nBox) < 3.2 && car.speed < 0.7) this.startService(d);
       }
       if (d.service) {
         d.service.t += dt;
@@ -831,7 +862,42 @@ export class RaceManager {
           if ((d.recoveries || 0) >= 4) { car.retired = true; car.retireReason = 'Stuck'; } else this.recoverCar(d);
         }
       } else d.offStillT = Math.max(0, (d.offStillT || 0) - dt);
+      // gridlock breaker: wants to go (target speed) but has hardly advanced for 20 s -> marshals clear wrecks ahead, then the car is
+      // lifted a little further up the road onto free tarmac
+      if (this.phase === 'racing' && this.time > 15 && !d.ai.holdPit && d.pitState === 'none') {
+        d.gridT = (d.gridT || 0) + dt;
+        if (d.gridT > 20) {
+          const moved = tr.delta(d.gridS ?? loc.s, loc.s);
+          d.gridT = 0; d.gridS = loc.s;
+          if (moved < 18 && d.ai.targetSpeed > 12) {
+            for (const o of this.cars) {
+              if (o === car || o.removed || !o.retired) continue;
+              const g = tr.delta(loc.s, o.loc.s);
+              if (g > -8 && g < 40) { o.removed = true; o.noCollide = true; o.x = 1e5; o.z = 1e5; this.events.push({ type: 'carRemoved', car: o }); }
+            }
+            if ((d.recoveries || 0) >= 6) { car.retired = true; car.retireReason = 'Stuck'; } else this.recoverClear(d);
+          }
+        }
+      } else { d.gridT = 0; d.gridS = loc.s; }
     }
+  }
+  /** like recoverCar, but looks for a gap in the traffic (no car within 9 m) on the road ahead */
+  recoverClear(d) {
+    const car = d.car, tr = this.track, s0 = car.loc.s;
+    let best = 8;
+    for (let k = 0; k < 14; k++) {
+      const s = s0 + 8 + k * 7;
+      let free = true;
+      for (const o of this.cars) { if (o === car || o.removed) continue; if (Math.abs(tr.delta(s, o.loc.s)) < 9) { free = false; break; } }
+      if (free) { best = 8 + k * 7; break; }
+    }
+    const tires = car.tires.map((t) => [t.tSurf, t.tCore]);
+    const sNew = (s0 + best) % tr.length;
+    car.place(tr, sNew, tr.line[Math.round(sNew / tr.ds) % tr.N] * 0.5, 4);
+    car.tires.forEach((t, i) => { t.tSurf = tires[i][0]; t.tCore = tires[i][1]; });
+    car.inPit = false; d.recoveries = (d.recoveries || 0) + 1; d.offStillT = 0;
+    if (d.ai) { d.ai.stuckT = 0; d.ai.off = 0; d.ai.offCmd = 0; d.ai.passSide = 0; d.ai.mistake.t = 0; d.ai.startLane = null; d.ai.merge = null; }
+    this.events.push({ type: 'recovered', driver: d });
   }
 
   raceStrategy(d, dt) {
@@ -851,7 +917,7 @@ export class RaceManager {
     else if (comp === 'inter' && (w > 0.55 || w < 0.05)) { want = true; next = w > 0.55 ? 'wet' : 'medium'; }
     else if (comp === 'wet' && w < 0.3) { want = true; next = w < 0.1 ? 'medium' : 'inter'; }
     else if (avgWear > wearLimit && remaining > 1) { want = true; next = w > 0.12 ? 'inter' : (comp === 'soft' ? 'hard' : 'medium'); }
-    else if (dm.fwL + dm.fwR > 0.55 && remaining > 1) { want = true; next = d.nextCompound; }
+    else if ((dm.fwL + dm.fwR > 0.55 || dm.rw > 0.5 || dm.floor > 0.5) && remaining > 1) { want = true; next = d.nextCompound; }
     else if (car.tires.some((t) => t.puncture > 0.4) && remaining > 1) { want = true; }
     if (d.forcePit) { want = true; next = d.nextCompound; }
     if (want && d.pitStops < 4 && !d.service && this.simTime - d.lastStop > 25 && !this.sc) { ai.pit.want = true; ai.pit.box = d.box; d.wantPit = true; d.nextCompound = next; }

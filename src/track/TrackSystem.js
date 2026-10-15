@@ -247,6 +247,12 @@ export class Track {
       if (pitZone[i] === 2) pitWallD[i] = edge + gap;
       else pitWallD[i] = 0;
     }
+    // the pit entry / exit ramps are open: no barrier (and no capped inside run-off) across them on the pit side
+    {
+      this.wallL0 = Float32Array.from(this.wallL); this.wallR0 = Float32Array.from(this.wallR);   // unmodified, for validation
+      const W = this.pitSide > 0 ? this.wallL : this.wallR;
+      for (let i = 0; i < N; i++) if ((pitZone[i] === 1 || pitZone[i] === 3) && pitOuter[i] > 0) W[i] = Math.max(W[i], pitOuter[i] + 0.4);
+    }
     // inner wall of the lane stops shortly after the ramps begin
     this.pitOuter = pitOuter; this.pitWallD = pitWallD; this.pitZone = pitZone;
     this.pitGap = gap; this.pitLaneWidth = laneW;
@@ -550,7 +556,7 @@ export class Track {
         if (ds < 250) continue;
         const dx = this.x[i] - this.x[j], dz = this.z[i] - this.z[j];
         const d = Math.hypot(dx, dz);
-        const need = Math.max(this.wallL[i], this.wallR[i]) + Math.max(this.wallL[j], this.wallR[j]) + 6;
+        const need = Math.max(this.wallL0[i], this.wallR0[i]) + Math.max(this.wallL0[j], this.wallR0[j]) + 6;
         const clear = d - need;
         if (clear < out.minClearance) out.minClearance = clear;
         if (clear < 0) { out.ok = false; if (out.errors.length < 5) out.errors.push(`track overlaps itself near s=${(i * this.ds).toFixed(0)} / ${(j * this.ds).toFixed(0)} (${d.toFixed(0)} m apart, need ${need.toFixed(0)})`); }
@@ -562,7 +568,7 @@ export class Track {
     // walls must not cross the inside of a corner
     for (let i = 0; i < N; i++) {
       const k = this.k[i];
-      const inside = k > 0 ? this.wallL[i] : this.wallR[i];
+      const inside = k > 0 ? this.wallL0[i] : this.wallR0[i];
       if (Math.abs(k) > 1e-4 && inside > 0.9 / Math.abs(k)) { out.ok = false; if (out.errors.length < 8) out.errors.push(`inside wall exceeds corner radius near s=${(i * this.ds).toFixed(0)} (R=${(1 / Math.abs(k)).toFixed(0)} wall=${inside.toFixed(1)})`); i += 20; }
     }
     return out;

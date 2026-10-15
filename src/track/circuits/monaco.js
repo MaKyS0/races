@@ -39,7 +39,7 @@ export default {
   ],
   elevation: [[0, 0], [0.07, 6], [0.18, 24], [0.24, 28], [0.36, 22], [0.45, 14], [0.58, 6], [0.72, 2], [0.88, 1], [0.97, 0.5]],
   runoff: { type: 'none', w: 0, grass: 0.5 },
-  kerbRadius: 120, kerbOutRadius: 40, kerbWidth: 1.2, lineMargin: 1.5,
+  kerbRadius: 120, kerbOutRadius: 40, kerbWidth: 1.2, lineMargin: 1.9,
   drs: [[-150, 400]],
   sectors: [1000, 2100],
   pit: { side: 'R', inS: -170, outS: 210, ramp: 60, laneWidth: 11, gap: 1.8 },

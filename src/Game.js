@@ -221,6 +221,7 @@ export class Game {
     } catch (e) { console.error(e); this.fatal = e; }
     const cpu = performance.now() - t0;
     this.perf.endFrame(dt * 1000, cpu, this.timing.phys, this.timing.render);
+    if (this.rm) this.rm.physLod = this.perf.level >= 3;   // emergency CPU relief only (thermal critical)
   }
   frameMenu(dt) { this.renderer.updateShowroom(dt); const r0 = performance.now(); this.renderer.render(); this.timing.render = performance.now() - r0; this.timing.phys = 0; }
   frameFrozen(dt) {
