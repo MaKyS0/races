@@ -259,6 +259,11 @@ export class Menu {
         this.slider('Engine', 0, 1, 0.05, () => A.engine, (v) => { A.engine = v; this.game.audio.applyVolumes(); }, (v) => Math.round(v * 100) + '%'),
         this.slider('Effects', 0, 1, 0.05, () => A.effects, (v) => { A.effects = v; this.game.audio.applyVolumes(); }, (v) => Math.round(v * 100) + '%'),
       );
+      const ch = this.game.audio.engineChoices();
+      if (ch.length) {
+        body.append(this.select('Your engine sound (real recordings)', [['auto', 'By team'], ...ch], () => A.engineSound, (v) => { A.engineSound = v; }));
+        body.append(el('div', 'sub', 'Engine sounds are cut from real Formula 1 recordings (V10 1996/2005, V8 2006–2010) made at Goodwood by "Edvvc", licence CC BY-SA 3.0 – see Credits in the README / public/audio/CREDITS.txt. They are pitch-shifted to the engine rpm of this simulator; the recordings are not of the hybrid V6 cars.'));
+      } else body.append(el('div', 'sub', this.game.audio.ready ? 'Engine recordings are loading or not installed – using the synthesised engine.' : 'Press any button once to start the audio engine.'));
     } else if (tab === 'controls') {
       const C = D.controls;
       body.append(

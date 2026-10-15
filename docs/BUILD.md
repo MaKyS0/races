@@ -112,3 +112,10 @@ bash scripts/build-ios.sh development      # или ad-hoc | app-store-connect
 (`ProcessInfo.thermalState`) возвращают `{state: nominal|fair|serious|critical, powerSave}`. JS регистрирует его через
 `registerPlugin('Thermal')` в `src/core/Perf.js` и опрашивает раз в 5 с. Плагин только читает состояние; игра сама снижает
 свою нагрузку. Работа на реальном устройстве не проверена.
+
+## Звук двигателей (записи F1)
+
+Опционально и отдельно от сборки APK/IPA: `npm run audio:fetch && npm run audio:build` (см. README, «Звук двигателей»).
+Нужны Node ≥ 20 и `ffmpeg` в PATH. Результат — `public/audio/` (manifest.json, CREDITS.txt, engines/*.wav, ~1 МБ),
+который Vite копирует в `dist/`, а Capacitor — в APK/IPA. Лицензия записей CC BY-SA 3.0: сохраните `CREDITS.txt` в сборке.
+Проверка в браузере: `node scripts/audio-test.mjs` (нужен `vite preview` на :4173).

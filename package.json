@@ -12,7 +12,9 @@
     "cap:sync": "npm run build && cap sync",
     "android:debug": "bash scripts/build-android.sh debug",
     "android:release": "bash scripts/build-android.sh release",
-    "ios:ipa": "bash scripts/build-ios.sh"
+    "ios:ipa": "bash scripts/build-ios.sh",
+    "audio:fetch": "node scripts/audio/fetch-recordings.mjs .audio-src",
+    "audio:build": "node scripts/audio/build-bank.mjs .audio-src public/audio"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.3",

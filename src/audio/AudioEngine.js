@@ -1,7 +1,11 @@
-// AudioEngine: fully synthesised (Web Audio) engine / tyre / brake / wind / rain / impact sounds - no audio assets to ship.
-// Player engine is a small additive synth driven by rpm + load; nearby AI cars get cheap 2-oscillator voices with Doppler + pan.
+// AudioEngine: engines are REAL F1 recordings (EngineBank: rpm-pitched, cross-faded loop layers, see public/audio/CREDITS.txt);
+// tyre / brake / wind / rain / impact / UI sounds are synthesised (Web Audio). If the recordings cannot be loaded, the
+// original additive synth is used for engines (player: 4 oscillators; nearby AI cars: 2-oscillator voices with Doppler + pan).
 import { clamp } from '../core/math.js';
-import { RPM_LIMIT } from '../physics/EngineAndTransmission.js';
+import { loadEngineBank, EngineVoice } from './EngineBank.js';
+
+// which recording each (fictional) team's car uses when 'Engine sound' = automatic; ids from public/audio/manifest.json
+const TEAM_ENGINES = ['v8a', 'v10a', 'v8c', 'v10b', 'v8b', 'v8d', 'v10a', 'v8a', 'v8c', 'v10b'];
 
 export class AudioEngine {
   constructor(settings) {
@@ -9,6 +13,23 @@ export class AudioEngine {
     this.ctx = null; this.ready = false; this.paused = false;
     this.nearVoices = [];
     this.lastThr = 0; this.lastGear = 1; this.t = 0;
+    this.bank = null; this.bankState = 'idle';   // idle | loading | ready | failed
+    this.pVoice = null; this.pEngId = null; this.aiVoices = new Map();
+  }
+  /** loads the recordings once (asynchronously; procedural engines play until they are decoded) */
+  loadBank() {
+    if (this.bankState !== 'idle' || !this.ctx) return;
+    this.bankState = 'loading';
+    const base = (typeof document !== 'undefined' && document.baseURI ? new URL('audio/', document.baseURI).href : 'audio/');
+    loadEngineBank(this.ctx, base).then((b) => { this.bank = b; this.bankState = b ? 'ready' : 'failed'; }).catch(() => { this.bankState = 'failed'; });
+  }
+  /** engine ids that are available (for the settings menu) */
+  engineChoices() { return this.bank ? [...this.bank.engines.values()].map((e) => [e.id, e.label]) : []; }
+  engineFor(car) {
+    if (!this.bank) return null;
+    const pick = this.settings.data.audio.engineSound;
+    const want = car.d && car.d.isPlayer && pick && pick !== 'auto' ? pick : TEAM_ENGINES[(car.d && car.d.def ? car.d.def.team : car.idx || 0) % TEAM_ENGINES.length];
+    return this.bank.engines.get(want) || this.bank.engines.values().next().value;
   }
   /** must be called from a user gesture on mobile/iOS */
   unlock() {
@@ -18,6 +39,7 @@ export class AudioEngine {
     try { this.ctx = new AC({ latencyHint: 'interactive' }); } catch (e) { return; }
     this.build();
     this.ready = true;
+    this.loadBank();
     if (this.ctx.state === 'suspended') this.ctx.resume();
   }
   setPaused(p) { this.paused = p; if (!this.ready) return; if (p) this.ctx.suspend(); else this.ctx.resume(); }
@@ -130,21 +152,32 @@ export class AudioEngine {
     const S = (p, v, tc = 0.03) => p.setTargetAtTime(v, now, tc);
     const rpm = car.pt.rpm, thr = car.pt.throttleApplied, sp = car.speed;
     const running = rm.phase !== 'init' && !car.retired && car.pt.fuel > 0;
-    const f0 = rpm / 60 * 3;
-    const f = Math.max(30, f0);
-    S(this.eo[0].o.frequency, f, 0.02); S(this.eo[1].o.frequency, f * 2.004, 0.02); S(this.eo[2].o.frequency, f * 4.01, 0.02); S(this.eo[3].o.frequency, f * 0.5, 0.02);
-    const load = 0.28 + 0.72 * thr;
-    S(this.eFilter.frequency, 500 + load * 4200 + rpm * 0.18, 0.04);
-    let g = running ? (0.10 + 0.34 * load) * (0.5 + 0.5 * clamp(rpm / 9000, 0, 1.2)) : 0;
-    if (car.pt.shiftTimer > 0) g *= 0.55;
-    S(this.eGain.gain, g, 0.03);
-    // rev limiter chop
-    S(this.lfoG.gain, car.pt.limiter ? 0.5 : 0, 0.01);
-    S(this.eAM.gain, car.pt.limiter ? 0.5 : 1, 0.01);
-    // turbo whistle
-    S(this.turbo.o.frequency, 2600 + thr * 5500 * clamp(rpm / 13000, 0, 1), 0.08); S(this.turbo.g.gain, running ? 0.012 + 0.03 * thr : 0, 0.1);
+    if (this.bank) {
+      // ---- recorded engine (player). 0.12 loop rms * 1.7 ~ comfortably under the master limiter
+      const eng = this.engineFor(car);
+      if (!this.pVoice || this.pEngId !== eng.id) {
+        if (this.pVoice) this.pVoice.dispose();
+        this.pVoice = new EngineVoice(ctx, this.engineBus, eng, { limiterLfo: true }); this.pEngId = eng.id;
+      }
+      this.pVoice.set(rpm, running ? thr : 0, running ? 1.7 : 0, now, { limiter: !!car.pt.limiter, shifting: car.pt.shiftTimer > 0 });
+      S(this.eGain.gain, 0, 0.03); S(this.turbo.g.gain, 0, 0.1);
+    } else {
+      const f0 = rpm / 60 * 3;
+      const f = Math.max(30, f0);
+      S(this.eo[0].o.frequency, f, 0.02); S(this.eo[1].o.frequency, f * 2.004, 0.02); S(this.eo[2].o.frequency, f * 4.01, 0.02); S(this.eo[3].o.frequency, f * 0.5, 0.02);
+      const load = 0.28 + 0.72 * thr;
+      S(this.eFilter.frequency, 500 + load * 4200 + rpm * 0.18, 0.04);
+      let g = running ? (0.10 + 0.34 * load) * (0.5 + 0.5 * clamp(rpm / 9000, 0, 1.2)) : 0;
+      if (car.pt.shiftTimer > 0) g *= 0.55;
+      S(this.eGain.gain, g, 0.03);
+      // rev limiter chop
+      S(this.lfoG.gain, car.pt.limiter ? 0.5 : 0, 0.01);
+      S(this.eAM.gain, car.pt.limiter ? 0.5 : 1, 0.01);
+      // turbo whistle
+      S(this.turbo.o.frequency, 2600 + thr * 5500 * clamp(rpm / 13000, 0, 1), 0.08); S(this.turbo.g.gain, running ? 0.012 + 0.03 * thr : 0, 0.1);
+    }
     // lift-off crackle + shifts
-    if (this.lastThr > 0.8 && thr < 0.15 && rpm > 9000) { for (let i = 0; i < 3; i++) setTimeout(() => this.burst(0.05 + Math.random() * 0.05, 2400, 0.22), i * 60 + Math.random() * 40); }
+    if (this.lastThr > 0.8 && thr < 0.15 && rpm > 9000 && !this.bank) { for (let i = 0; i < 3; i++) setTimeout(() => this.burst(0.05 + Math.random() * 0.05, 2400, 0.22), i * 60 + Math.random() * 40); }
     if (car.pt.gear !== this.lastGear) { this.gearClick(); this.lastGear = car.pt.gear; }
     this.lastThr = thr;
     // wind, tyres, brakes, kerb, rain
@@ -160,6 +193,7 @@ export class AudioEngine {
     this.updateVoices(rm, cam, car, now);
   }
   updateVoices(rm, cam, focus, now) {
+    if (this.bank) return this.updateBankVoices(rm, cam, focus, now);
     const cp = cam.position;
     // right vector of the camera in the xz plane
     const e = cam.matrixWorld.elements; // column 0 = right, column 2 = back
@@ -187,5 +221,35 @@ export class AudioEngine {
       if (v.pan) v.pan.pan.setTargetAtTime(clamp((dx * rx + dz * rz) / Math.max(8, d), -1, 1), now, 0.05);
     }
   }
-  dispose() { if (this.ctx) this.ctx.close(); this.ready = false; }
+  /** opponents with recordings: the 4 nearest cars to the camera each get a voice with their team's engine (pan + doppler + distance) */
+  updateBankVoices(rm, cam, focus, now) {
+    const cp = cam.position, e = cam.matrixWorld.elements, rx = e[0], rz = e[2];
+    for (const v of this.nearVoices) v.g.gain.setTargetAtTime(0, now, 0.05);   // the procedural voices stay silent
+    const cand = [];
+    for (const c of rm.cars) {
+      if (c === focus || c.removed || c.retired) continue;
+      const dx = c.x - cp.x, dz = c.z - cp.z, d2 = dx * dx + dz * dz;
+      if (d2 < 260 * 260) cand.push([d2, c]);
+    }
+    cand.sort((a, b) => a[0] - b[0]);
+    const want = new Set(cand.slice(0, 4).map((x) => x[1]));
+    for (const [car, v] of this.aiVoices) if (!want.has(car)) { v.silence(now); if (!v.dying) v.dying = now + 0.6; else if (now > v.dying) { v.dispose(); this.aiVoices.delete(car); } }
+    for (const [d2, c] of cand.slice(0, 4)) {
+      let v = this.aiVoices.get(c);
+      if (!v) { const eng = this.engineFor(c); if (!eng) continue; v = new EngineVoice(this.ctx, this.engineBus, eng, { pan: true }); this.aiVoices.set(c, v); }
+      v.dying = 0;
+      const d = Math.sqrt(d2), dx = c.x - cp.x, dz = c.z - cp.z;
+      const rad = ((c.vx - focus.vx) * dx + (c.vz - focus.vz) * dz) / Math.max(1, d);
+      const doppler = 1 - clamp(rad, -90, 90) / 340;
+      v.set(c.pt.rpm * doppler, c.pt.throttleApplied, 1.5 / (1 + d / 24), now, { limiter: false, bright: 1 / (1 + d / 160) });
+      if (v.pan) v.pan.pan.setTargetAtTime(clamp((dx * rx + dz * rz) / Math.max(8, d), -1, 1), now, 0.05);
+    }
+  }
+  dispose() {
+    if (this.pVoice) this.pVoice.dispose();
+    for (const v of this.aiVoices.values()) v.dispose();
+    this.aiVoices.clear();
+    if (this.ctx) this.ctx.close();
+    this.ready = false;
+  }
 }

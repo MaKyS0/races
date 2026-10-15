@@ -32,3 +32,4 @@ ios/DerivedData/
 keystore/*.jks
 keystore/*.keystore
 node_modules
+.audio-src/
