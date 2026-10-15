@@ -77,6 +77,8 @@ export class Vehicle {
     this.distance = 0; // odometer
     this.rest = false;
     this.wallE = 0.1; this.wallMu = 0.35; this.noCollide = false; this.scrape = 0;
+    this.limiterSpeed = 0; this.limiterActive = false; this.holdBrake = 0;
+    this.prev = new Float64Array(12); // previous physics state for render interpolation
     this.applySetup();
   }
 
@@ -139,8 +141,21 @@ export class Vehicle {
     const mS = m * 0.92;                 // sprung mass
     const Ip = C.Ip0 * mScale, Ir = C.Ir0 * mScale;
 
+    // previous state for interpolation
+    const pv = this.prev;
+    pv[0] = this.x; pv[1] = this.z; pv[2] = this.y; pv[3] = this.psi; pv[4] = this.h; pv[5] = this.th; pv[6] = this.ph; pv[7] = this.steer;
+    pv[8] = this.wheelAngle[0]; pv[9] = this.wheelAngle[1]; pv[10] = this.wheelAngle[2]; pv[11] = this.wheelAngle[3];
+
     // ------------------------------------------------------ driver inputs (retired cars just roll to a stop)
-    let thr = retired ? 0 : ctrl.throttle, brk = retired ? 0.6 : ctrl.brake;
+    let thr = retired ? 0 : ctrl.throttle, brk = retired ? 0.6 : Math.max(ctrl.brake, this.holdBrake);
+    // pit-lane speed limiter: holds the speed limit with throttle and, if needed, a little brake
+    this.limiterActive = false;
+    if (ctrl.limiter && this.limiterSpeed > 0 && !retired) {
+      this.limiterActive = true;
+      const over = speed - this.limiterSpeed;
+      thr = Math.min(thr, clamp(-over * 0.35, 0, 1));
+      if (over > 1.5) brk = Math.max(brk, clamp((over - 1.5) * 0.12, 0, 0.45));
+    }
     if (this.rest) { thr = 0; brk = Math.max(brk, 0.3); }
 
     // ------------------------------------------------------ steering with assists
@@ -225,7 +240,7 @@ export class Vehicle {
       fz += (i < 2 ? antiLong : -antiLong) * 0.5;
       const sideLeft = i === 0 || i === 2;
       fz += (sideLeft ? -1 : 1) * (i < 2 ? geoRollF : geoRollR);
-      this.fz[i] = fz;
+      this.fz[i] = clamp(fz, -50, 40000);
     }
     // ---------- aero (uses ride heights from the body state)
     this.rideF = -1000 * (this.h + C.a * this.th);
@@ -314,7 +329,7 @@ export class Vehicle {
     this.tcActive = this.tcCut > 0.05;
 
     // ------------------------------------------------------ powertrain
-    const axleT = retired ? 0 : pt.update(dt, thr, brk, wRearAvg, speed, ctrl.up, ctrl.down, brakes.regenTorque, this.tcCut, ctrl.limiter);
+    const axleT = retired ? 0 : pt.update(dt, thr, brk, wRearAvg, speed, ctrl.up, ctrl.down, brakes.regenTorque, this.tcCut, false);
     if (retired) { pt.rpm = Math.max(0, pt.rpm - 3000 * dt); }
     ctrl.up = false; ctrl.down = false;
 
@@ -406,7 +421,9 @@ export class Vehicle {
     // soft stops (plank / bump stops)
     if (this.h < -0.045) { this.h = -0.045; if (this.hv < 0) this.hv *= -0.2; }
     if (this.h > 0.05) { this.h = 0.05; if (this.hv > 0) this.hv = 0; }
-    this.th = clamp(this.th, -0.05, 0.05); this.ph = clamp(this.ph, -0.05, 0.05);
+    if (this.th > 0.05) { this.th = 0.05; if (this.thv > 0) this.thv = 0; } else if (this.th < -0.05) { this.th = -0.05; if (this.thv < 0) this.thv = 0; }
+    if (this.ph > 0.05) { this.ph = 0.05; if (this.phv > 0) this.phv = 0; } else if (this.ph < -0.05) { this.ph = -0.05; if (this.phv < 0) this.phv = 0; }
+    this.hv = clamp(this.hv, -4, 4); this.thv = clamp(this.thv, -4, 4); this.phv = clamp(this.phv, -4, 4);
     // floor contact -> sparks
     const lowest = Math.max(-(this.h + C.a * this.th), -(this.h - C.b * this.th)) * 1000; // mm of compression front/rear
     this.sparks = clamp((lowest - 38) / 14, 0, 1) * (speed > 15 ? 1 : 0);

@@ -4,7 +4,7 @@ import { buildSpeedProfile } from '../src/ai/SpeedProfile.js';
 import { DriverAI } from '../src/ai/OpponentAI.js';
 const ids = process.argv.slice(2).length ? process.argv.slice(2) : CIRCUITS.map((c) => c.id);
 const env = { water: 0, tAir: 25, tTrack: 35, wearMult: 1 };
-const dt = 1 / 120;
+const dt = (+(process.env.STEPS || 1)) / 120;
 for (const id of ids) {
   const track = getTrack(id);
   const prof = buildSpeedProfile(track, { muLat: +(process.env.MU || 1.75), muBrake: +(process.env.MUB || 1.75) });

@@ -73,9 +73,15 @@ export class CollisionSystem {
     const edge = left ? track.wl[loc.i] : track.wr[loc.i];
     const z = track.pitZone[loc.i];
     if (!track.inPitRange(loc.s)) { c.inPit = false; return; }
-    if (z === 1 && onPitSide && a > edge + 1.2 && c.inPit === false && track.pitOuter[loc.i] > 0 && a > edge + 0.5 * (track.pitOuter[loc.i] - edge)) c.inPit = true;
-    else if (z === 3 && (!onPitSide || a < edge + 0.3)) c.inPit = false;
-    else if (z === 0) c.inPit = false;
+    if (z === 1) {
+      // entry ramp: once the car is clearly beyond the track edge on the pit side it is in the lane
+      if (!c.inPit && onPitSide && track.pitOuter[loc.i] > 0 && a > edge + 1.6) c.inPit = true;
+      else if (c.inPit && (!onPitSide || a < edge + 0.2)) c.inPit = false;
+    } else if (z === 3) {
+      // exit ramp: back on the track when it has returned to the racing surface
+      if (c.inPit && (!onPitSide || a < edge + 0.3)) c.inPit = false;
+      else if (!c.inPit && onPitSide && a > edge + 1.6) c.inPit = true;
+    } else if (z === 0) c.inPit = false;
   }
 
   // ------------------------------------------------------------------- walls
@@ -328,9 +334,9 @@ export class CollisionSystem {
   hitCorner(c, i, eff, ev, lost) {
     const dm = c.damage;
     const before = dm.sus[i];
-    dm.sus[i] = clamp(dm.sus[i] + eff / 16000, 0, 1);
+    dm.sus[i] = clamp(dm.sus[i] + eff / 52000, 0, 1);
     // tyre puncture chance grows with energy
-    const pP = clamp((eff - 2500) / 14000, 0, 0.95);
+    const pP = clamp((eff - 4000) / 30000, 0, 0.95);
     if (!dm.tyrePunct[i] && this.rng() < pP) { dm.tyrePunct[i] = 1; c.tires[i].leak = 0.05 + this.rng() * 0.18; }
     if (before < 1 && dm.sus[i] >= 1 && !dm.wheelOff[i]) {
       dm.wheelOff[i] = 1;

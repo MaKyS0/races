@@ -8,7 +8,7 @@ export const RPM_IDLE = 4200, RPM_LIMIT = 15000, RPM_MAX_SAFE = 15900;
 export const GEAR_RATIOS = [0, 19.6, 15.2, 12.1, 9.9, 8.35, 7.1, 6.15, 5.45]; // overall incl. final drive
 export const DRIVELINE_EFF = 0.93;
 export const I_DRIVE = 0.11; // kg m^2 engine+MGU+clutch inertia reflected through the gear squared
-const FUEL_PER_JOULE = 4.8e-8; // kg per J of mechanical ICE work (~100 kg/h at 580 kW)
+const FUEL_PER_JOULE = 4.1e-8; // kg per J of mechanical ICE work (~100 kg/h at 580 kW)
 export const ERS_CAPACITY = 4.0e6; // J
 export const ERS_POWER = 120e3;    // W
 
@@ -146,7 +146,8 @@ export class Powertrain {
     else {
       const clutchCap = 520; // Nm engine side
       const slip = clamp((this.rpm - rpmW) / 3000, 0, 1);
-      axle = clamp(tCrank, -clutchCap, clutchCap) * g * DRIVELINE_EFF * (0.55 + 0.45 * slip);
+      // a slipping clutch can only transmit drive torque (engine drag cannot push the car backwards)
+      axle = clamp(Math.max(tCrank, 0), 0, clutchCap) * g * DRIVELINE_EFF * (0.55 + 0.45 * slip);
     }
     this.axleTorque = axle;
     return axle;

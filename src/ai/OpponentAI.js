@@ -31,6 +31,8 @@ export class DriverAI {
     this.lastCommandSteer = 0;
     this.rejoinMode = false;
     this.drsWanted = false;
+    this.squeeze = 0;
+    this.startLane = null;   // {n, s0}: hold the grid lane until the field has spread out
   }
 
   // ------------------------------------------------------------------ helpers
@@ -68,8 +70,8 @@ export class DriverAI {
     let look = clamp(7 + 0.42 * speed, 9, 55);
     if (speed < 6) look = 8;
     const iLook = (i + Math.round(look / ds)) % N;
-    let nLine = tr.line[iLook];
-    let nHere = tr.line[i];
+    if (this.startLane) { const dd = tr.delta(this.startLane.s0, loc.s); if (dd > 800 || dd < -50) this.startLane = null; }
+    let nLine = this.baseN(iLook);
 
     // lateral planning (traffic) -------------------------------------------------------------
     const wl = tr.wl[iLook] - 1.25, wr = tr.wr[iLook] - 1.25;
@@ -77,7 +79,7 @@ export class DriverAI {
     const myN = loc.n;
     this.pressure = 0;
     if (!pitMode && ctx.race !== false) {
-      const ah = ctx.ahead, bh = ctx.behind;
+      const ah = this.startLane ? null : ctx.ahead, bh = this.startLane ? null : ctx.behind;
       // overtaking
       if (ah && ctx.aheadGap < 34 && ctx.aheadGap > 1 && !ctx.noPass) {
         const closing = speed - ah.speed;
@@ -93,42 +95,50 @@ export class DriverAI {
           this.passSide = side; this.passTimer = 2.5 + rng() * 1.5;
         }
         if (this.passSide !== 0) {
-          const target = ah.loc.n + this.passSide * 2.35;
+          const target = ah.loc.n + this.passSide * 2.9;
           desiredOff = clamp(target, -wr, wl) - nLine;
         }
       } else if (this.passSide !== 0) {
         this.passTimer -= dt;
         if (this.passTimer <= 0 || !ah || ctx.aheadGap > 45) this.passSide = 0;
-        else if (ah) desiredOff = clamp(ah.loc.n + this.passSide * 2.35, -wr, wl) - nLine;
+        else if (ah) desiredOff = clamp(ah.loc.n + this.passSide * 2.9, -wr, wl) - nLine;
       }
       // defend: nudge towards the car behind once when it is close and about to try the inside
-      if (bh && ctx.behindGap < 14 && this.aggression > 0.45 && this.passSide === 0) {
+      if (bh && ctx.behindGap < 14 && this.aggression > 0.45 && this.passSide === 0 && Math.abs(bh.loc.n - myN) < 3.4 && speed > 25) {
         const dn = bh.loc.n - myN;
         if (Math.abs(dn) > 0.8) { this.defendTimer = 1.2; }
         if (this.defendTimer > 0) desiredOff += clamp(dn, -1.4, 1.4) * 0.7;
       }
       this.defendTimer = Math.max(0, this.defendTimer - dt);
-      // never share the same piece of road with a neighbour
-      const nb = ctx.neighbors;
-      for (let q = 0; q < ctx.nNeighbors; q++) {
-        const o = nb[q];
-        if (o === car) continue;
-        const ds2 = tr.delta(loc.s, o.loc.s);
-        if (Math.abs(ds2) > 7.5) continue;
-        const dn = myN - o.loc.n;
-        const need = 2.45;
-        if (Math.abs(dn) < need) {
-          const side = Math.abs(dn) < 0.05 ? (car.id > o.id ? 1 : -1) : Math.sign(dn);
-          desiredOff += side * (need - Math.abs(dn)) * 0.9;
-          this.pressure = Math.max(this.pressure, 0.6);
-        }
-      }
     }
     // smooth the offset
     const rate = 3.2 * dt;
     this.off += clamp(desiredOff - this.off, -rate, rate);
     let nTarget = nLine + this.off;
     if (!pitMode) nTarget = clamp(nTarget, -tr.wr[iLook] + 1.0, tr.wl[iLook] - 1.0);
+    // never share the same piece of road with a neighbour: keep the lateral target at least `need` metres away from
+    // anyone alongside (hard constraint; the speed controller handles the rest)
+    if (!pitMode || car.inPit) {
+      const nb = ctx.neighbors;
+      let minT = -1e9, maxT = 1e9;
+      for (let q = 0; q < ctx.nNeighbors; q++) {
+        const o = nb[q];
+        if (o === car || o.inPit !== car.inPit) continue;
+        const ds2 = tr.delta(loc.s, o.loc.s);
+        if (Math.abs(ds2) > 8.5) continue;
+        const need = 2.6 + Math.min(0.6, Math.abs(car.speed - o.speed) * 0.03);
+        if (o.loc.n > myN) { if (o.loc.n - need < maxT) maxT = o.loc.n - need; }
+        else { if (o.loc.n + need > minT) minT = o.loc.n + need; }
+        this.pressure = Math.max(this.pressure, 0.6);
+      }
+      if (minT > -1e8 || maxT < 1e8) {
+        const lo = -tr.wr[iLook] + 1.0, hi = tr.wl[iLook] - 1.0;
+        if (minT > maxT) { nTarget = 0.5 * (minT + maxT); this.squeeze = 1; }
+        else { nTarget = clamp(nTarget, minT, maxT); this.squeeze = 0; }
+        // never leave the road to make room; if there is no room, lift instead
+        if (nTarget < lo || nTarget > hi) { nTarget = clamp(nTarget, lo, hi); this.squeeze = 1; }
+      } else this.squeeze = 0;
+    }
 
     // pit lane lateral targets
     if (pitMode) {
@@ -141,22 +151,34 @@ export class DriverAI {
       }
     }
 
-    // ---------------------------------------------------------------- steering (pure pursuit + slide catching)
+    // ---------------------------------------------------------------- steering: curvature feed-forward + Stanley feedback
     const sn = Math.sin(car.psi), cs = Math.cos(car.psi);
-    // target point in world
-    const lx = tr.x[iLook] + Math.cos(tr.psi[iLook]) * nTarget;
-    const lz = tr.z[iLook] - Math.sin(tr.psi[iLook]) * nTarget;
-    const dx = lx - car.x, dz = lz - car.z;
-    const fwd = dx * sn + dz * cs, lat = dx * cs - dz * sn;
-    const dist = Math.max(4, Math.hypot(fwd, lat));
-    let alpha = Math.atan2(lat, Math.max(fwd, 0.5));
-    let delta = Math.atan((2 * WB * Math.sin(alpha)) / dist);
-    // lateral error feedback (keeps the line against understeer)
-    const nErr = (nTarget - myN);
-    delta += clamp(nErr * 0.004, -0.02, 0.02);
+    // path (racing line + lateral offsets) at the car and a short way ahead
+    const iA = i, iB = (i + 6) % N;
+    const nA = this.pathN(iA, nTarget, nLine, pitMode, tr, loc);
+    const nB = this.pathN(iB, nTarget, nLine, pitMode, tr, loc);
+    const ax = tr.x[iA] + Math.cos(tr.psi[iA]) * nA, az = tr.z[iA] - Math.sin(tr.psi[iA]) * nA;
+    const bx = tr.x[iB] + Math.cos(tr.psi[iB]) * nB, bz = tr.z[iB] - Math.sin(tr.psi[iB]) * nB;
+    const phi = Math.atan2(bx - ax, bz - az);
+    const ect = (ax - car.x) * Math.cos(phi) + (az - car.z) * (-Math.sin(phi));
+    const course = speed > 8 ? Math.atan2(car.vx, car.vz) : car.psi;
+    const ePsi = wrapPi(phi - course);
+    // feed-forward from the curvature of the path a fraction of a second ahead
+    const iF = (i + Math.max(1, Math.round((3 + speed * 0.13) / ds))) % N;
+    let kF = tr.lineK[iF];
+    if (pitMode) kF = tr.k[iF];
+    let dFF = Math.atan(WB * kF) + 0.0006 * speed * speed * kF;
+    let delta = dFF + 0.9 * ePsi + Math.atan((1.6 * ect) / (speed + 4));
     // counter-steer when the rear steps out
     const rearSlip = Math.atan2(car.v - car.r * CAR.b, Math.max(4, Math.abs(car.u)));
     if (Math.abs(rearSlip) > 0.05 && speed > 8) delta += clamp(-rearSlip * 0.9, -0.25, 0.25) * clamp((Math.abs(rearSlip) - 0.05) / 0.06, 0, 1);
+    // never ask for more steering than the tyres can use
+    {
+      const dfS = car.aero.downF + car.aero.downR;
+      const ayCap = 1.9 * (9.81 + dfS / car.mass);
+      const dCap = (WB * ayCap) / Math.max(speed * speed, 25) + 0.075;
+      delta = clamp(delta, -dCap, dCap);
+    }
     const lock = car.steerLock();
     ctrl.steer = clamp(delta / lock, -1, 1);
     // understeer protection: once the front tyres are beyond their peak slip, unwinding the wheel restores grip
@@ -173,6 +195,7 @@ export class DriverAI {
     this.updateMistakes(dt, ctx, loc);
     if (this.mistake.t > 0) { vt *= this.mistake.mul; this.mistake.t -= dt; }
     vt *= 1 - 0.12 * over;
+    if (this.squeeze) vt *= 0.9;
     // aggression lets AI brake a little later when attacking
     if (this.passSide !== 0) vt *= 1 + 0.012 * this.aggression;
     // car following
@@ -180,12 +203,17 @@ export class DriverAI {
     this.followGap = 999;
     if (ah && !pitMode && ctx.race !== false) {
       const g = ctx.aheadGap;
-      const sameLane = Math.abs(ah.loc.n - myN) < 2.4;
-      if (g < 40 && sameLane && (this.passSide === 0 || g < 9)) {
+      // in the way if it is beside me now OR will be on the line I am about to take
+      const iAh = (i + Math.round(Math.max(0, ctx.aheadGap + 5) / ds)) % N;
+      const nPathAh = tr.line[iAh] + this.off;
+      const sameLane = Math.abs(ah.loc.n - myN) < 2.3 || Math.abs(ah.loc.n - nPathAh) < 2.3;
+      if (g < 170 && sameLane && (this.passSide === 0 || g < 9)) {
         this.followGap = g;
-        const des = 6.0 + 0.04 * speed;
-        const vFollow = ah.speed + (g - des) * 0.7;
-        vt = Math.min(vt, Math.max(vFollow, ah.speed * 0.7));
+        const des = 5 + 0.2 * speed;
+        // 'safe speed' behind a slower car: can still brake at 18 m/s^2 down to the leader's speed at the desired gap;
+        // closer than the desired gap -> ease off below the leader's speed so the gap re-opens
+        const vSafe = g >= des ? ah.speed + Math.sqrt(2 * 18 * (g - des)) : Math.max(ah.speed - 0.5 * (des - g), ah.speed - 12);
+        vt = Math.min(vt, vSafe);
       }
     }
     // global race-control limits
@@ -210,7 +238,7 @@ export class DriverAI {
     // off-track recovery: crawl back
     const edge = myN >= 0 ? tr.wl[i] : tr.wr[i];
     const offTrack = !pitMode && Math.abs(myN) > edge + 1.8;
-    if (offTrack) vt = Math.min(vt, 20);
+    if (offTrack) vt = Math.min(vt, speed > 25 ? Math.max(20, speed - 15) : 20);
     this.targetSpeed = vt;
 
     // ---------------------------------------------------------------- pedals
@@ -251,8 +279,27 @@ export class DriverAI {
     // stuck detection (grass/gravel traps)
     if (!car.retired && !pitMode && !this.holdPit && speed < 1.5 && ctx.race !== false) {
       this.stuckT += dt;
-      if (this.stuckT > 12) { car.retired = true; car.retireReason = 'Stuck'; }
+      if (this.stuckT > 30) { car.retired = true; car.retireReason = 'Stuck'; }
     } else this.stuckT = Math.max(0, this.stuckT - dt);
+  }
+
+  /** lateral coordinate of the intended path at sample j (line + the current offsets, pit lane when in pit mode) */
+  pathN(j, nTarget, nLineHere, pitMode, tr, loc) {
+    if (pitMode) {
+      const kind = this.pit.state === PIT.TOBOX || this.pit.state === PIT.SERVICE ? 'box' : 'fast';
+      return tr.pitZone[j] === 0 ? tr.line[j] : tr.pitLaneN(j, kind);
+    }
+    // keep the offset implied by nTarget (which already contains the lane/neighbour constraints)
+    return this.baseN(j) + (nTarget - nLineHere);
+  }
+  /** racing line, or the grid lane blended into it during the first metres of a race */
+  baseN(j) {
+    const tr = this.track;
+    const line = tr.line[j];
+    if (!this.startLane) return line;
+    const dist = tr.delta(this.startLane.s0, j * tr.ds);
+    const w = Math.min(1, Math.max(0, (dist - 180) / 520)), sw = w * w * (3 - 2 * w);
+    return this.startLane.n * (1 - sw) + line * sw;
   }
 
   updateMistakes(dt, ctx, loc) {
