@@ -269,6 +269,7 @@ export class Menu {
     if (tab === 'graphics') {
       body.append(
         this.select('Graphics profile', [['auto', `Auto (${perf.qualityName()})`], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']], () => D.graphics, (v) => { D.graphics = v; perf.level = 0; this.game.renderer.onPerfChange(); }),
+        this.toggle('Cinematic look (glow, light shafts, speed blur, colour grade)', () => D.fx !== false, (v) => { D.fx = v; this.game.renderer.applyScale(); }),
         this.select('Target frame rate', [['auto', `Auto (${perf.targetFps} fps)`], [30, '30 fps, saves battery'], [60, '60 fps, recommended'], [90, '90 fps'], [120, '120 fps']], () => D.fps, (v) => { D.fps = v; }),
         this.slider('Max render resolution', 0.5, 1, 0.05, () => D.resolution, (v) => { D.resolution = v; perf.setScale(Math.min(perf.scale, v)); this.game.renderer.applyScale(); }, (v) => Math.round(v * 100) + '%'),
         this.toggle('Dynamic resolution', () => D.dynamicResolution, (v) => { D.dynamicResolution = v; }),

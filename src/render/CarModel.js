@@ -140,7 +140,9 @@ export class CarVisual {
     const mesh = (g, m, shadow = true) => { const o = new THREE.Mesh(g, mat(m)); o.castShadow = shadow && !this.ghost; return o; };
     const bodyG = merge(P.body), accG = merge(P.accent);
     l0.add(mesh(bodyG, M.body), mesh(accG, M.accent, false), mesh(P.detail, M.detail, D >= 2), mesh(P.suspension, M.detail, false));
-    if (!this.ghost) l0.add(mesh(P.lights, M.light, false));
+    // rain / brake light: its own material so it can glow (HDR, picked up by the bloom) with this car's brake pedal
+    this.lightMat = M.light.clone();
+    if (!this.ghost) l0.add(mesh(P.lights, this.lightMat, false));
     this.rwFixedMesh = mesh(P.rwFixed, M.detail, D >= 1); l0.add(this.rwFixedMesh);
     this.fwL = mesh(P.fwL, M.detail, D >= 1); this.fwR = mesh(P.fwR, M.detail, D >= 1); l0.add(this.fwL, this.fwR, mesh(P.fwNose, M.detail, false));
     this.rwFlap = new THREE.Group(); this.rwFlap.position.set(0, 1.0, -2.4); this.rwFlap.add(mesh(P.rwFlap, M.detail)); if (P.rwFlap2) this.rwFlap.add(mesh(P.rwFlap2, M.detail, false)); l0.add(this.rwFlap);
@@ -224,6 +226,7 @@ export class CarVisual {
         if (g < 0.5) { const k = g * 2; w.discMat.color.setRGB(0.07 + k * 1.1, 0.07 + k * 0.1, 0.075 - k * 0.04); }
         else { const k = (g - 0.5) * 2; w.discMat.color.setRGB(1.17 + k * 1.4, 0.17 + k * 1.05, 0.035 + k * 0.3); }
       }
+      if (this.lightMat) this.lightMat.color.setScalar(0.9 + 6.0 * Math.min(1, car.brakes.pedal) + (car.speed < 1.5 ? 0.6 : 0));
       const d = car.damage;
       this.fwL.visible = d.fwL < 0.92; this.fwR.visible = d.fwR < 0.92;
       this.fwL.rotation.z = -d.fwL * 0.35; this.fwR.rotation.z = d.fwR * 0.35;

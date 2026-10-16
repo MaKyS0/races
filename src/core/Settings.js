@@ -16,6 +16,7 @@ export const KEY_LABELS = {
 
 export const DEFAULTS = {
   graphics: 'auto',            // auto | low | medium | high
+  fx: true,                    // cinematic post-processing (Medium: grade + speed pass, High: + bloom, light shafts, grain); never on Low
   fps: 'auto',                 // auto | 30 | 60 | 90 | 120
   resolution: 1,               // manual render scale cap (0.5 .. 1)
   dynamicResolution: true,

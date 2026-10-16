@@ -13,6 +13,7 @@ import { atmosphereFor } from './Atmosphere.js';
 import { WX, WY } from '../physics/VehiclePhysics.js';
 import { TEAMS } from '../race/Roster.js';
 import { SURF } from '../track/TrackSystem.js';
+import { PostFX } from './PostFX.js';
 
 const _v = new THREE.Vector3();
 
@@ -26,6 +27,7 @@ export class Renderer3D {
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(62, 1, 0.12, 7000);
     this.atmo = atmosphereFor({});
+    this.post = new PostFX(gl, this.scene, this.camera); this.sunCol = new THREE.Color(); this.fxRain = 0; this.fxCloud = 0; this.camMode = 'chase';
     this.sky = new Sky(this.qname); this.skyLow = this.qname === 'low'; this.sky.setPalette(this.atmo); this.scene.add(this.sky.mesh);
     this.scene.fog = new THREE.Fog(0xb4cfee, 300, 1500);
     this.hemi = new THREE.HemisphereLight(0xd6e6ff, 0x6b7a4a, 1.05); this.scene.add(this.hemi);
@@ -102,6 +104,8 @@ export class Renderer3D {
     const pr = Math.max(0.5, Math.min(dpr, this.q.pixelRatio) * this.perf.scale);
     this.renderer.setPixelRatio(pr);
     this.resize();
+    this.post.setSize(this.width, this.height, pr);
+    this.post.setLevel(this.settings.data.fx === false ? 0 : this.qname === 'high' ? 2 : this.qname === 'medium' ? 1 : 0);
     if (this.effects) this.effects.setScale(0.55 * (this.canvas.height || 720));
   }
   resize() {
@@ -223,6 +227,7 @@ export class Renderer3D {
     const wet = w.water, cloud = w.cloud;
     if (Math.abs(wet - this.lastWet) > 0.015 && this.trackMesh) { this.trackMesh.setWet(wet); this.lastWet = wet; }
     const flash = w.lightning || 0;
+    this.fxRain = w.rain; this.fxCloud = cloud;
     this.sky.setWeather(cloud, w.rain, flash);
     this.scene.fog.color.copy(this.sky.fogColor);
     if (this.mats && this.mats.wetU) this.mats.wetU.uSkyRefl.value.copy(this.sky.uniforms.horizon.value).multiplyScalar(0.55);
@@ -240,6 +245,7 @@ export class Renderer3D {
   // ---------------------------------------------------------------- per-frame sync
   sync(rm, alpha, dt, camController) {
     this.time += dt;
+    if (camController) this.camMode = camController.mode;
     const cam = this.camera.position;
     const track = rm.track;
     const q = this.q;
@@ -433,6 +439,12 @@ export class Renderer3D {
 
   render() {
     if (this.perfDirty) { this.perfDirty = false; this.onPerfChange(); }
+    if (this.post.enabled) {
+      const dt = Math.min(0.1, this.perf.frameMs / 1000 || 0.016), A = this.atmo;
+      this.sunCol.set(A.sunColor);
+      const sp = this.showroom ? 0 : this.debugSpeed ?? (this.focus ? this.focus.speed : 0);   // (debugSpeed: screenshots only)
+      if (this.post.render(dt, { speed: sp, sunDir: this.sky.uniforms.sunDir.value, sunVis: Math.max(0, 1 - this.fxCloud * 1.4) * (this.showroom ? 0 : 1), rain: this.fxRain, sunColor: this.sunCol, time: this.time, focusY: this.camMode === 'chase' ? 0.34 : 0.5, warm: 1 - this.fxCloud * 0.5 })) return;
+    }
     this.renderer.render(this.scene, this.camera);
   }
 }
