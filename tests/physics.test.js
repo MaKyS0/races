@@ -208,3 +208,32 @@ describe('vehicle dynamics', () => {
     expect(grew).toBeLessThan(40 * 1024 * 1024); // 60k steps; any per-step allocation would be many hundreds of MB
   });
 });
+
+describe('low-speed stability (regressions: "crazy skids at low speed")', () => {
+  const T2 = getTrack('silverstone');
+  function maxBeta({ v0, steer, thr, water = 0, surf, comp = 'medium', tc = 1, T = 4 }) {
+    const c = new Vehicle(1); c.setFuel(40); c.fitTyres(comp, 90); Object.assign(c.assists, { abs: 0, tc, steer: 1, autoGear: true, brakeHelp: 1 });
+    c.applySetup(); c.pt.auto = true; c.d = { isPlayer: true }; c.place(T2, 800, 0, v0);
+    const env = { water, tAir: 18, tTrack: 20, wearMult: 1, forceSurface: surf ?? 0 };
+    for (let i = 0; i < 60; i++) { c.ctrl.throttle = 0.25; c.step(DT, T2, env); }
+    c.vx = Math.sin(c.psi) * v0; c.vz = Math.cos(c.psi) * v0;
+    let t = 0, b = 0;
+    while (t < T) { c.ctrl.steer = t > 0.5 ? steer : 0; c.ctrl.throttle = thr; c.step(DT, T2, env); t += DT; if (c.speed > 1.5) b = Math.max(b, Math.abs(Math.atan2(c.v, Math.max(Math.abs(c.u), 1.5)))); }
+    return b * 57.3;
+  }
+  it('lifting off with the wheel turned on wet slicks does not lock the rears and spin the car (engine-brake map)', () => {
+    for (const v0 of [10, 15, 20, 25]) for (const steer of [0.2, 0.5, 1]) expect(maxBeta({ v0, steer, thr: 0, water: 0.4 })).toBeLessThan(30);
+  });
+  it('the dry lift-off deceleration is still there (the engine-brake limit only bites when the tyres cannot take it)', () => {
+    const c = new Vehicle(1); c.setFuel(40); c.fitTyres('medium', 90); Object.assign(c.assists, { tc: 1, steer: 1, autoGear: true }); c.applySetup(); c.pt.auto = true; c.d = { isPlayer: true }; c.place(T2, 800, 0, 60);
+    for (let i = 0; i < 60; i++) { c.ctrl.throttle = 0.5; c.step(DT, T2, ENV); }
+    const v1 = c.speed; for (let i = 0; i < 120; i++) { c.ctrl.throttle = 0; c.step(DT, T2, ENV); }
+    expect(v1 - c.speed).toBeGreaterThan(4);
+  });
+  it('driving on grass with the wheel turned stays controllable (off-track roughness no longer unloads the wheels)', () => {
+    for (const v0 of [4, 8, 14]) for (const thr of [0, 0.5, 1]) expect(maxBeta({ v0, steer: 1, thr, surf: SURFACES.grass.id })).toBeLessThan(30);
+  });
+  it('full lock + any throttle from 0-25 m/s on tarmac never spins the car (default assists)', () => {
+    for (const v0 of [0, 3, 6, 10, 15, 20, 25]) for (const thr of [0, 0.5, 1]) expect(maxBeta({ v0, steer: 1, thr })).toBeLessThan(25);
+  });
+});

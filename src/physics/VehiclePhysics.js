@@ -213,7 +213,7 @@ export class Vehicle {
         bump = track.kerbHeight(loc.s, Math.abs(nw) - edge, kw) ;
         if (dm.wheelOff[i]) bump = 0;
       } else if (sf.rough > 0) {
-        bump = sf.rough * 0.012 * Math.sin(loc.s * 2.9 + i * 1.7) * Math.sin(loc.s * 6.3 + i);
+        bump = sf.rough * 0.005 * Math.sin(loc.s * 2.9 + i * 1.7) * Math.sin(loc.s * 6.3 + i);   // (was 0.012: +-2.5 kN load swings per wheel on a 2.5 kN corner -> wheels airborne, car spinning off-track)
       }
       this.gfPrev[i] = this.gf[i];
       this.gf[i] += (bump - this.gf[i]) * lpK;
@@ -380,11 +380,27 @@ export class Vehicle {
       // peak, so without this a spun-up wheel would stay spun-up for as long as the pedal is held)
       const kRear = Math.max(this.kappa[2], this.kappa[3], 0);
       const recover = 1 - 0.5 * clamp((kRear - 0.22) / 0.28, 0, 1);
-      const capT = budget * allow * recover + inertial;
+      const capT = budget * allow * recover + Math.min(inertial, 0.5 * budget);   // (the inertial allowance must not feed on itself: a spinning-up wheel on a loose surface raised its own cap)
       // the budget may drop instantly (load leaves the tyre, lateral force rises) but only recovers at a finite rate, so the first
       // instants of a launch and every abrupt pedal stab cannot overshoot before the tyres' state has been seen
       if (capT < this.tractionCap) this.tractionCap = capT; else this.tractionCap += (capT - this.tractionCap) * expK(40, dt);
       if (axleT > this.tractionCap) { axleT = this.tractionCap; this.tractionLimited = true; } else this.tractionLimited = false;
+    } else if (axleT < 0) {
+      // Engine braking is a torque on the rear axle too: on a wet / cold / loose surface a high-rpm lift-off in a low gear used to
+      // lock the rear wheels and spin the car at once. Real cars manage it (engine-brake maps): never ask the rear tyres for more
+      // retarding torque than they can still give after the lateral force they have to keep producing.
+      let budget = 0;
+      for (let i = 2; i < 4; i++) {
+        if (dm.wheelOff[i]) continue;
+        const mf = this.tires[i].mu * this.fzF[i];
+        const fy = Math.max(Math.abs(this.fyw[i]), 0.5 * m * Math.max(Math.abs(this.ayBody), speed * Math.abs(this.r)) * C.a / WB);
+        budget += Math.sqrt(Math.max(mf * mf - Math.min(fy, mf) * Math.min(fy, mf), 0.0225 * mf * mf)) * C.Rw[i];
+      }
+      const kRearB = Math.min(this.kappa[2], this.kappa[3]);
+      const easing = 1 - 0.6 * clamp((-kRearB - 0.12) / 0.2, 0, 1);       // a rear wheel already locking gets less retardation
+      const capB = 0.6 * budget * easing;
+      if (-axleT > capB) { axleT = -capB; this.engineBrakeLimited = true; } else this.engineBrakeLimited = false;
+      this.tractionCap = Math.max(this.tractionCap, 0); this.tractionLimited = false;
     } else { this.tractionCap = Math.max(this.tractionCap, 0); this.tractionLimited = false; }
     this.wRearPrev = wRearPrevNow;
     if (retired) { pt.rpm = Math.max(0, pt.rpm - 3000 * dt); }

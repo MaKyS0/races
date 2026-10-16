@@ -440,7 +440,7 @@ export class Track {
   kerbHeight(s, d, w) {
     if (d < 0.1) return 0.006 * (d / 0.1);
     const edge = clamp((w - d) / 0.25, 0, 1);
-    return (0.010 + 0.008 * Math.sin(s * 3.4)) * Math.min(1, d / 0.3) * edge;
+    return (0.006 + 0.004 * Math.sin(s * 3.4)) * Math.min(1, d / 0.3) * edge;   // (was 0.010 + 0.008: 10 Hz load swings of a whole corner weight at 20 m/s)
   }
 
   /** world point at (s, n) -> out {x,y,z,psi} */
