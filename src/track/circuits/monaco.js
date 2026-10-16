@@ -44,6 +44,6 @@ export default {
   sectors: [1000, 2100],
   pit: { side: 'R', inS: -170, outS: 210, ramp: 60, laneWidth: 11, gap: 1.8 },
   wallRestitution: 0.22, wallFriction: 0.3,
-  theme: { sky: 0x87a9cf, grass: 0x5a6b55, accent: '#e8002d', city: true },
+  theme: { sky: 0x87a9cf, grass: 0x5a6b55, accent: '#e8002d', city: true, time: 'midday', kerb: 0xd8161e },
   weatherBias: 0.1,
 };

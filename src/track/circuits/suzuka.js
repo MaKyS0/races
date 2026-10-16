@@ -39,6 +39,6 @@ export default {
   sectors: [1900, 3900],
   pit: { side: 'R', inS: -250, outS: 330 },
   wallRestitution: 0.1, wallFriction: 0.38,
-  theme: { sky: 0xa3b7c9, grass: 0x3c7a3a, accent: '#e8002d' },
+  theme: { sky: 0xa3b7c9, grass: 0x3c7a3a, accent: '#e8002d', time: 'golden', kerb: 0xd8161e },
   weatherBias: 0.55,
 };

@@ -8,6 +8,8 @@ import { CAR, WX, WY } from '../physics/VehiclePhysics.js';
 export const COL = {
   carbon: 0x30333b, carbonLight: 0x42464f, black: 0x0c0d10, rubber: 0x1b1c20, metal: 0xa4a9b1, steel: 0x6d727a,
   visor: 0x07090d, caliper: 0xc9302a, white: 0xeeeeee, light: 0xff2a1a, gold: 0xc8a24a,
+  // marker colours: the per-team detail material (and the baked LODs) replace these with the team / accent colour
+  teamMark: 0xff00ff, accentMark: 0x00ffff,
 };
 
 // ------------------------------------------------------------------ primitives
@@ -186,7 +188,7 @@ export function buildParts(detail = 1) {
   // mirrors: stalk + housing + glass
   for (const s of [1, -1]) {
     add(tubeG([s * 0.28, 0.60, 0.60], [s * 0.455, 0.735, 0.70], 0.012, 6), COL.carbon);
-    add(boxG(0.15, 0.075, 0.045, s * 0.50, 0.745, 0.70, 0, s * -0.12), COL.carbonLight);
+    add(boxG(0.15, 0.075, 0.045, s * 0.50, 0.745, 0.70, 0, s * -0.12), COL.accentMark);
     add(boxG(0.13, 0.062, 0.006, s * 0.50, 0.745, 0.673, 0, s * -0.12), COL.visor);
   }
   // floor + diffuser + edge wing fences
@@ -220,10 +222,10 @@ export function buildParts(detail = 1) {
     g.push(foil(x0 + (s > 0 ? 0.30 : 0), x1 - (s > 0 ? 0 : 0.30), 0.205, 2.585, 0.20, 0.045, -0.08, 0.40));
     if (D >= 1) g.push(foil(x0 + (s > 0 ? 0.36 : 0), x1 - (s > 0 ? 0 : 0.36), 0.250, 2.555, 0.17, 0.04, -0.08, 0.50));
     if (D >= 1) g.push(boxG(0.30, 0.012, 0.28, s * 0.20, 0.060, 2.66));                    // central tray
-    g.push(plateX([[2.86, 0.045], [2.88, 0.30], [2.62, 0.33], [2.38, 0.22], [2.40, 0.045]], s * 0.985, 0.014));   // endplate
     if (D >= 1) { g.push(boxG(0.12, 0.010, 0.32, s * 0.935, 0.048, 2.68)); }               // footplate
     if (D >= 2) for (let i = 0; i < 3; i++) g.push(boxG(0.010, 0.06 + i * 0.012, 0.22, s * (0.30 + i * 0.12), 0.128 + i * 0.015, 2.60));   // strakes
-    return merge(g.map((x) => tint(clean(x), COL.carbon)));
+    const end = tint(clean(plateX([[2.86, 0.045], [2.88, 0.30], [2.62, 0.33], [2.38, 0.22], [2.40, 0.045]], s * 0.985, 0.014)), COL.teamMark);   // endplate in team colour
+    return merge([...g.map((x) => tint(clean(x), COL.carbon)), end]);
   };
   P.fwL = fw(1); P.fwR = fw(-1);
   P.fwNose = merge([tint(clean(boxG(0.045, 0.10, 0.50, 0.11, 0.14, 2.42, 0, 0.1)), COL.carbon), tint(clean(boxG(0.045, 0.10, 0.50, -0.11, 0.14, 2.42, 0, -0.1)), COL.carbon)]);
@@ -231,11 +233,12 @@ export function buildParts(detail = 1) {
   // ============ rear wing: fixed (main plane, lower plane, endplates) + DRS flap (origin at its pivot)
   const rf = [foil(-0.47, 0.47, 0.91, -2.52, 0.38, 0.075, -0.07, 0.22), foil(-0.47, 0.47, 0.72, -2.55, 0.30, 0.06, -0.06, 0.18)];
   if (D >= 1) rf.push(foil(-0.47, 0.47, 0.60, -2.58, 0.24, 0.05, -0.05, 0.12));
+  const rfEnd = [];
   for (const s of [1, -1]) {
-    rf.push(plateX([[-2.22, 0.50], [-2.26, 0.95], [-2.50, 1.10], [-2.80, 1.14], [-2.84, 0.90], [-2.70, 0.55], [-2.52, 0.48]], s * 0.482, 0.014));
+    rfEnd.push(plateX([[-2.22, 0.50], [-2.26, 0.95], [-2.50, 1.10], [-2.80, 1.14], [-2.84, 0.90], [-2.70, 0.55], [-2.52, 0.48]], s * 0.482, 0.014));
     if (D >= 2) for (let i = 0; i < 3; i++) rf.push(boxG(0.016, 0.014, 0.20, s * 0.482, 0.62 + i * 0.12, -2.62, 0, 0, 0));
   }
-  P.rwFixed = merge(rf.map((x) => tint(clean(x), COL.carbon)));
+  P.rwFixed = merge([...rf.map((x) => tint(clean(x), COL.carbon)), ...rfEnd.map((x) => tint(clean(x), COL.teamMark))]);
   P.rwFlap = tint(clean(foil(-0.465, 0.465, 0, -0.17, 0.30, 0.05, -0.07, 0.10)), COL.carbon);
   P.rwFlap2 = D >= 1 ? tint(clean(foil(-0.465, 0.465, 0.065, -0.40, 0.17, 0.04, -0.06, 0.28)), COL.carbonLight) : null;
 

@@ -43,7 +43,11 @@ export class CameraController {
       target.pos.set(px, py, pz);
       cam.position.lerp(target.pos, this.blend < 1 ? 1 - Math.exp(-3 * dt) : 1 - Math.exp(-14 * dt));
       cam.position.y = Math.max(cam.position.y, car.y + 1.1);
-      cam.up.set(0, 1, 0);
+      // a little roll into the corner with the cornering load (smoothed, at most ~1.7 degrees)
+      const yawRate = this.prevPsi === undefined || dt <= 0 ? 0 : wrapPi(car.psi - this.prevPsi) / dt; this.prevPsi = car.psi;
+      const rollT = Math.max(-0.03, Math.min(0.03, -yawRate * speed * 0.0016));
+      this.roll = (this.roll || 0) + (rollT - (this.roll || 0)) * (1 - Math.exp(-3 * dt));
+      cam.up.set(Math.cos(this.yaw) * Math.sin(this.roll), Math.cos(this.roll), -Math.sin(this.yaw) * Math.sin(this.roll));
       cam.lookAt(car.x + Math.sin(this.yaw) * 9, car.y + 0.9, car.z + Math.cos(this.yaw) * 9);
       fovT = 58 + Math.min(24, speed * 0.1);
     } else if (this.mode === 'top') {

@@ -1,3 +1,10 @@
+// Barlow / Barlow Condensed (SIL OFL 1.1, bundled - works offline in the app): latin subset, only the weights the UI uses
+import '@fontsource/barlow/latin-400.css';
+import '@fontsource/barlow/latin-500.css';
+import '@fontsource/barlow/latin-600.css';
+import '@fontsource/barlow-condensed/latin-500.css';
+import '@fontsource/barlow-condensed/latin-600.css';
+import '@fontsource/barlow-condensed/latin-700.css';
 import './ui/style.css';
 import { Game } from './Game.js';
 
@@ -19,6 +26,7 @@ if (q.get('autostart') || q.get('bench')) {
   if (q.get('fps')) game.settings.data.fps = q.get('fps') === 'auto' ? 'auto' : +q.get('fps');
   game.settings.data.preserveBuffer = !!q.get('shot');
   setTimeout(async () => {
+    try { await Promise.race([document.fonts.load('700 64px "Barlow Condensed"'), new Promise((r) => setTimeout(r, 1500))]); } catch (e) { /* trackside boards fall back to the system face */ }
     await game.startSession(cfg);
     if (q.get('bench')) runBench(game, +(q.get('seconds') || 30));
   }, 50);

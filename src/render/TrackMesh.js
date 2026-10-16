@@ -123,13 +123,14 @@ export class TrackMesh {
       const i0 = c * rowsPerChunk, i1 = Math.min(N, i0 + rowsPerChunk);
       const chunk = { i0, i1, hi: new THREE.Group(), lo: new THREE.Group() };
       for (const [grp, stride] of [[chunk.hi, 1], [chunk.lo, 4]]) {
-        const G = new GeoBuilder(), K = new GeoBuilder(), W = new GeoBuilder(), W2 = new GeoBuilder();
-        this.buildRange(i0, i1, stride, G, K, W, W2, city);
-        const geoG = G.build(), geoK = K.build(), geoW = W.build(), geoW2 = W2.build();
+        const G = new GeoBuilder(), K = new GeoBuilder(), W = new GeoBuilder(), W2 = new GeoBuilder(), F = this.mats.fence ? new GeoBuilder() : null;
+        this.buildRange(i0, i1, stride, G, K, W, W2, city, F);
+        const geoG = G.build(), geoK = K.build(), geoW = W.build(), geoW2 = W2.build(), geoF = F && stride === 1 ? F.build() : null;
         if (geoG) { const m = new THREE.Mesh(geoG, this.groundMat); m.receiveShadow = true; grp.add(m); }
         if (geoK) { const m = new THREE.Mesh(geoK, this.kerbMat); m.receiveShadow = true; m.renderOrder = 1; grp.add(m); }
         if (geoW) { const m = new THREE.Mesh(geoW, this.wallMat); grp.add(m); }
         if (geoW2) { const m = new THREE.Mesh(geoW2, this.wallMat2); grp.add(m); }
+        if (geoF) { const m = new THREE.Mesh(geoF, this.mats.fence); m.renderOrder = 2; grp.add(m); }   // catch fence: near chunks only
         grp.visible = false;
         this.group.add(grp);
       }
@@ -158,12 +159,12 @@ export class TrackMesh {
     return y + wedge + rel;
   }
 
-  buildRange(i0, i1, stride, G, K, W, W2, city) {
+  buildRange(i0, i1, stride, G, K, W, W2, city, F = null) {
     const t = this.track, N = t.N, ds = t.ds;
     const idxs = [];
     for (let i = i0; i < i1; i += stride) idxs.push(i);
     idxs.push(i1);
-    const st = { G: null, K: {}, W: {}, W2: {} };
+    const st = { G: null, K: {}, W: {}, W2: {}, F: {} };
     for (let r = 0; r < idxs.length; r++) {
       const iu = idxs[r], i = iu % N, sG = iu * ds;
       const psi = t.psi[i];
@@ -210,13 +211,23 @@ export class TrackMesh {
         const h = city ? 1.5 : pitHere ? 1.7 : 1.15;
         const y0 = t.y[i] + Math.max(-0.045, Math.min(0.045, t.cross[i])) * Math.min(wallN, 12) * sg - 0.05;
         const x = cx + lx * sg * wallN, z = cz + lz * sg * wallN;
-        const a = B.v(x, y0, z, [1, 1, 1], sG / 8, 1), b = B.v(x, y0 + h, z, [1, 1, 1], sG / 8, 0);
+        // u runs so that text reads left-to-right seen from the track on both sides; v = 1 at the top (canvas textures are flipY)
+        const u = sg * sG / 16;
+        const a = B.v(x, y0, z, [1, 1, 1], u, 0), b = B.v(x, y0 + h, z, [1, 1, 1], u, 1);
         if (S[key]) { const p = S[key]; B.tri(p[0], a, p[1]); B.tri(p[1], a, b); }
         S[key] = [a, b];
+        // catch fence above the open-circuit barriers (not along the pit wall / city walls)
+        if (F) {
+          if (!city && !pitHere) {
+            const fa = F.v(x, y0 + h, z, [1, 1, 1], sG / 6, 0), fb = F.v(x, y0 + h + 3.4, z, [1, 1, 1], sG / 6, 1);
+            if (st.F[key]) { const p = st.F[key]; F.tri(p[0], fa, p[1]); F.tri(p[1], fa, fb); }
+            st.F[key] = [fa, fb];
+          } else st.F[key] = null;
+        }
         if ((left ? 1 : -1) === t.pitSide && t.pitWallD[i] > 0) {
           const nIn = t.pitWallD[i];
           const xi = cx + lx * sg * nIn, zi = cz + lz * sg * nIn, yi = t.y[i] - 0.03;
-          const aa = W2.v(xi, yi, zi, [1, 1, 1], sG / 8, 1), bb = W2.v(xi, yi + 1.0, zi, [1, 1, 1], sG / 8, 0);
+          const aa = W2.v(xi, yi, zi, [1, 1, 1], sg * sG / 16, 0), bb = W2.v(xi, yi + 1.0, zi, [1, 1, 1], sg * sG / 16, 1);
           if (st.W2[key + 'in']) { const p = st.W2[key + 'in']; W2.tri(p[0], aa, p[1]); W2.tri(p[1], aa, bb); }
           st.W2[key + 'in'] = [aa, bb];
         } else st.W2[key + 'in'] = null;
@@ -234,12 +245,12 @@ export class TrackMesh {
     }
   }
   setWet(w) {
-    // one shared ground material: wetter = darker, glossier
+    // one shared ground material: wetter = darker and glossier. With the wet shader (Medium/High) the darkening, the puddles
+    // and the sky sheen happen per pixel on grey surfaces only; the cheap Low material just darkens.
     const m = this.mats;
-    m.ground.roughness = lerp(0.95, 0.35, w);
-    m.ground.color.setScalar(lerp(1, 0.62, w));
-    if (m.groundEnvIntensity !== undefined) m.ground.envMapIntensity = lerp(0.25, 1.1, w);
-    m.kerb.roughness = lerp(0.8, 0.4, w);
+    if (m.wetU) { m.wetU.uWet.value = w; m.ground.color.setScalar(lerp(1, 0.9, w)); }
+    else { m.ground.color.setScalar(lerp(1, 0.62, w)); if (m.ground.roughness !== undefined) m.ground.roughness = lerp(0.95, 0.4, w); }
+    if (m.kerb.roughness !== undefined) m.kerb.roughness = lerp(0.8, 0.3, w);
   }
 
   /** racing-line overlay coloured by the speed profile (green = accelerate, red = brake) */

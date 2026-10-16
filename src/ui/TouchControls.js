@@ -14,9 +14,16 @@ const DEFAULT_LAYOUT = {
   left: { x: 1.5, y: 4, s: 1, o: 1 }, right: { x: 14.5, y: 4, s: 1, o: 1 }, steer: { x: 2, y: 4, s: 1, o: 1 },
   brake: { x: 70.5, y: 4, s: 1, o: 1 }, gas: { x: 84.5, y: 4, s: 1, o: 1 },
   up: { x: 60, y: 33, s: 1, o: 1 }, down: { x: 53, y: 33, s: 1, o: 1 }, drs: { x: 89.5, y: 33, s: 1, o: 1 }, pit: { x: 82, y: 33, s: 1, o: 1 },
-  cam: { x: 67.5, y: 33, s: 1, o: 1 }, ers: { x: 74.5, y: 33, s: 1, o: 1 }, pause: { x: 46, y: 83, s: 0.85, o: 1 },
+  cam: { x: 67.5, y: 33, s: 1, o: 1 }, ers: { x: 74.5, y: 33, s: 1, o: 1 }, pause: { x: 19, y: 84, s: 0.85, o: 1 },   // pause sits clear of the flag banner (top centre)
 };
-const LABELS = { left: '◀', right: '▶', gas: 'GAS', brake: 'BRAKE', up: '▲', down: '▼', drs: 'DRS', pit: 'PIT', cam: '🎥', ers: 'ERS', pause: 'II' };
+// one icon set (inline SVG, 24x24 grid, solid shapes) so every glyph has the same weight on every device font
+const svg = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
+const ICON = {
+  left: svg('M15.5 3.5 6 12l9.5 8.5z'), right: svg('M8.5 3.5 18 12l-9.5 8.5z'),
+  up: svg('M12 5.5 20 16H4z'), down: svg('M12 18.5 4 8h16z'),
+  cam: svg('M3 7h12v10H3zM16 10.5l5-3v9l-5-3z'), pause: svg('M6 4.5h4.2v15H6zM13.8 4.5H18v15h-4.2z'),
+};
+const LABELS = { left: ICON.left, right: ICON.right, gas: 'GAS', brake: 'BRAKE', up: ICON.up, down: ICON.down, drs: 'DRS', pit: 'PIT', cam: ICON.cam, ers: 'ERS', pause: ICON.pause };
 const NAMES = { left: 'Steer left', right: 'Steer right', steer: 'Virtual wheel', gas: 'GAS', brake: 'BRAKE', up: 'Shift up', down: 'Shift down', drs: 'DRS', pit: 'Pit', cam: 'Camera', ers: 'ERS', pause: 'Pause' };
 const HOLD = new Set(['left', 'right', 'gas', 'brake', 'drs']);     // buttons that act while held
 const TAP_ACTION = { up: 'shiftUp', down: 'shiftDown', cam: 'camera', pit: 'pit', ers: 'ers', pause: 'pause' };
@@ -59,8 +66,8 @@ export class TouchControls {
     const mk = (id, cls, html = '') => { const d = document.createElement('div'); d.className = 'tctl ' + cls; d.dataset.id = id; d.innerHTML = html; this.el.appendChild(d); this.items[id] = d; return d; };
     const w = mk('steer', 'tc-wheel', '<div class="wheel"><i></i><b></b></div>');
     this.wheelEl = w.querySelector('.wheel');
-    mk('left', 'tc-big tc-steerbtn', '<span>' + LABELS.left + '</span>');
-    mk('right', 'tc-big tc-steerbtn', '<span>' + LABELS.right + '</span>');
+    mk('left', 'tc-big tc-steerbtn', LABELS.left);
+    mk('right', 'tc-big tc-steerbtn', LABELS.right);
     mk('brake', 'tc-big tc-brake', '<span>BRAKE</span>');
     mk('gas', 'tc-big tc-gas', '<span>GAS</span>');
     for (const id of ['up', 'down', 'drs', 'pit', 'cam', 'ers', 'pause']) mk(id, 'tc-btn', LABELS[id]);

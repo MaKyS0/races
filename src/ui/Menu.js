@@ -7,6 +7,14 @@ import { fmtTime } from '../core/math.js';
 
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; };
 const hex = (c) => '#' + c.toString(16).padStart(6, '0');
+/** the player's team colour is the only brand hue: it is set once here and read by CSS (var(--team)) */
+export const setTeamColour = (teamIdx) => { const t = TEAMS[teamIdx % TEAMS.length]; if (t && typeof document !== 'undefined') document.documentElement.style.setProperty('--team', hex(t.color)); };
+// brand mark: the racing line through a corner, the apex dot in the team colour
+const MARK = '<svg viewBox="0 0 90 64" aria-hidden="true"><path class="rk" d="M4 64 L4 26 Q4 4 26 4 L90 4 M26 64 L26 34 Q26 26 34 26 L90 26"/><path class="rl" d="M8 64 C8 44 13 31 27.5 27.5 C44 23.5 64 12 88 7"/><circle class="ap" cx="27.5" cy="27.5" r="4.4"/></svg>';
+/** pit board (the identity's signature): slotted chalk plates on a black board */
+export function pitBoard(head, num, slots) {
+  return `<div class="pitboard"><div class="pb-head"><span>${head}</span><i>${num}</i></div>${slots.map(([k, v, of]) => `<div class="slot"><span class="k">${k}</span><span class="big">${v}</span>${of ? `<span class="small">${of}</span>` : ''}</div>`).join('')}</div>`;
+}
 const BLURB = {
   monza: 'Temple of speed. Very long straights, minimal wings and violent braking into the chicanes.',
   monaco: 'Narrow street circuit. Walls everywhere, slow corners, no room for mistakes. Qualifying is everything.',
@@ -24,13 +32,14 @@ export class Menu {
     this.screen = null; this.stack = [];
     this.trackInfoCache = {};
     this.draft = null; this.tab = 'session';
+    setTeamColour(this.settings.data.game.team || 0);
   }
-  clear() { if (this.screen) { this.screen.remove(); this.screen = null; } }
-  show(cls = '') { this.clear(); const s = el('div', 'screen ' + cls); this.root.appendChild(s); this.screen = s; return s; }
+  clear() { if (this.screen) { this.screen.remove(); this.screen = null; } document.body.classList.remove('menu-open'); }
+  show(cls = '') { this.clear(); const s = el('div', 'screen ' + cls); this.root.appendChild(s); this.screen = s; document.body.classList.add('menu-open'); return s; }
   hide() { this.clear(); this.stack.length = 0; }
   toast(text, ms = 2600) { const t = el('div', 'toast', text); this.root.appendChild(t); setTimeout(() => t.remove(), ms); }
   btn(text, fn, cls = '') { const b = el('button', 'btn ' + cls, text); b.onclick = () => { this.game.audio.unlock(); fn(); }; return b; }
-  loading(text = 'Loading…') { const l = el('div', 'loading', `<div class="spinner"></div><div>${text}</div>`); l.style.pointerEvents = 'auto'; this.root.appendChild(l); return () => l.remove(); }
+  loading(text = 'Loading…') { const l = el('div', 'loading', `<div class="loadlights" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div><div>${text}</div>`); l.style.pointerEvents = 'auto'; this.root.appendChild(l); return () => l.remove(); }
 
   // ---------------------------------------------------------------- field helpers
   slider(label, min, max, step, get, set, fmt = (v) => v) {
@@ -56,33 +65,41 @@ export class Menu {
   // ---------------------------------------------------------------- MAIN
   showMain() {
     this.game.enterMenuScene();
-    const s = this.show();
-    s.append(el('div', 'title', 'APEX <b>GP</b>'), el('div', 'sub', 'Formula-style racing simulator · realistic vehicle physics'));
+    setTeamColour(this.settings.data.game.team || 0);
+    const s = this.show('main');
+    const brand = el('div', 'brand', `<span class="word">Apex GP</span>${MARK}`);
+    s.append(brand, el('div', 'sub', 'Single-seater racing with real tyre, brake and weather physics on six circuits.'));
     const m = el('div', 'menu');
     const champ = this.game.championship;
+    const minor = el('div', 'minor');
+    minor.append(
+      this.btn('Garage', () => { this.tab = 'car'; this.showSetup(); }, 'small'),
+      this.btn('Controls', () => this.showSettings('controls'), 'small'),
+      this.btn('Settings', () => this.showSettings('graphics'), 'small'),
+      this.btn('How to drive', () => this.showHelp(), 'small'),
+    );
     m.append(
-      this.btn('▶  Quick race', () => this.game.startSession({ ...this.settings.data.game, assists: this.settings.data.assists, setup: this.settings.data.setup }), 'primary'),
-      this.btn('Game modes & session setup', () => this.showSetup()),
-      this.btn(champ.active ? `Championship · round ${champ.round + 1}/${champ.calendar.length}` : 'Championship', () => this.showChampionship()),
-      this.btn('Garage · car setup', () => { this.tab = 'car'; this.showSetup(); }),
-      this.btn('Controls', () => this.showSettings('controls')),
-      this.btn('Settings · graphics & audio', () => this.showSettings('graphics')),
-      this.btn('Help', () => this.showHelp()),
+      this.btn('Quick race', () => this.game.startSession({ ...this.settings.data.game, assists: this.settings.data.assists, setup: this.settings.data.setup }), 'primary'),
+      this.btn('Session setup', () => this.showSetup()),
+      this.btn(champ.active ? `Championship, round ${champ.round + 1} of ${champ.calendar.length}` : 'Championship', () => this.showChampionship()),
+      el('div', 'group-gap'), minor,
     );
     s.appendChild(m);
-    const f = el('div', 'footer'); f.appendChild(el('div', 'sub', `Best laps saved on this device · ${Object.keys(this.settings.data.records).length} tracks`));
+    const n = Object.keys(this.settings.data.records).length;
+    const f = el('div', 'footer'); f.appendChild(el('div', 'sub', n ? `Personal bests saved on this device for ${n} ${n === 1 ? 'circuit' : 'circuits'}.` : 'Personal bests are saved on this device.'));
     s.appendChild(f);
+    const first = m.querySelector('.btn'); if (first && !('ontouchstart' in window)) first.focus({ preventScroll: true });
   }
 
   showHelp() {
     const s = this.show('solid');
-    s.append(el('div', 'title', 'How to <b>drive</b>'));
+    s.append(el('div', 'title', 'How to drive'));
     const p = el('div', 'panel');
     p.innerHTML = `<p><b>Braking is a skill.</b> Pressure builds with your input; heavy braking transfers weight to the front axle. Full pedal at low speed locks the wheels (no ABS in races) – brake hard early, release as you slow down and keep the pedal in proportion to available grip (downforce gives more grip at high speed).</p>
     <p><b>Tyres:</b> grip depends on temperature, wear and the surface. Overheated or worn tyres slide. Wet weather needs Intermediate/Wet tyres – slicks aquaplane.</p>
-    <p><b>Keyboard:</b> W/S throttle/brake · A/D steer · E/Q shift · Space DRS · B pit request · C camera · V replay · R reset · [ ] brake bias · G ERS mode · Esc pause.<br><b>Gamepad:</b> RT/LT pedals · left stick steer · RB/LB shift · X DRS · Y camera. <b>Touch:</b> on-screen wheel, pedals and paddles (layout is editable in Controls).</p>
+    <p><b>Keyboard:</b> W/S throttle and brake, A/D steer, E/Q shift, Space DRS, B pit request, C camera, V replay, R reset, [ ] brake bias, G ERS mode, Esc pause.<br><b>Gamepad:</b> RT/LT pedals, left stick steers, RB/LB shift, X DRS, Y camera. <b>Touch:</b> GAS and BRAKE buttons on the right, steering on the left (the layout is editable in Settings, Touch).</p>
     <p>Assists (ABS in practice/time-trial, traction control, steering help) make the car easier but never replace the physics – you can still lock up, spin or crash.</p>`;
-    s.append(p, el('div', 'footer')); s.lastChild.append(this.btn('Back', () => this.showMain()));
+    s.append(p, el('div', 'footer')); s.lastChild.append(this.btn('Back', () => this.showMain(), 'small'));
   }
 
   // ---------------------------------------------------------------- SESSION SETUP
@@ -91,7 +108,7 @@ export class Menu {
     const g = this.draftCfg();
     this.game.enterMenuScene(g.team);
     const s = this.show();
-    s.append(el('div', 'title', 'Session <b>setup</b>'));
+    s.append(el('div', 'title', 'Session setup'));
     const tabs = el('div', 'tabs');
     for (const [id, name] of [['session', 'Mode & track'], ['car', 'Team & car'], ['rules', 'Race rules'], ['assists', 'Driver aids']]) {
       const t = el('button', 'tab' + (this.tab === id ? ' on' : ''), name); t.onclick = () => { this.tab = id; this.showSetup(); }; tabs.appendChild(t);
@@ -103,7 +120,8 @@ export class Menu {
     else if (this.tab === 'rules') this.tabRules(body, g);
     else this.tabAssists(body);
     const f = el('div', 'footer');
-    f.append(this.btn('◀ Back', () => { this.draft = null; this.showMain(); }, 'small'), this.btn('START  ▶', () => this.go(), 'primary small'));
+    const lbl = { race: 'Start race', quali: 'Start qualifying', practice: 'Start practice', timetrial: 'Start time trial' }[g.mode] || 'Start';
+    f.append(this.btn(lbl, () => this.go(), 'primary small'), this.btn('Back', () => { this.draft = null; this.showMain(); }, 'small ghost'));
     s.appendChild(f);
   }
   go() {
@@ -115,12 +133,14 @@ export class Menu {
     const modes = [['race', 'Grand Prix'], ['quali', 'Qualifying'], ['practice', 'Practice'], ['timetrial', 'Time Trial']];
     const row = el('div', 'row');
     for (const [id, name] of modes) { const b = el('button', 'btn small' + (g.mode === id ? ' sel' : ''), name); b.onclick = () => { g.mode = id; this.showSetup(); }; row.appendChild(b); }
-    body.append(row, el('div', 'sub', { race: 'Full race with start procedure, pit stops, flags, safety car and penalties.', quali: 'Timed qualifying against the field. Your result sets the grid for the next race.', practice: 'Free practice with opponents, assists allowed (ABS), unlimited tyre changes.', timetrial: 'Just you and your best-lap ghost.' }[g.mode]));
+    body.append(row, el('div', 'modehint', { race: 'Full race with start procedure, pit stops, flags, safety car and penalties.', quali: 'Timed qualifying against the field. Your result sets the grid for the next race.', practice: 'Free practice with opponents, assists allowed (ABS), unlimited tyre changes.', timetrial: 'Just you and your best-lap ghost.' }[g.mode]));
     const cards = el('div', 'cards');
     for (const c of CIRCUITS) {
       const card = el('div', 'card' + (g.trackId === c.id ? ' sel' : ''));
-      card.innerHTML = `<h3>${c.name}</h3><svg data-t="${c.id}" viewBox="0 0 200 120"></svg><p>${BLURB[c.id] || ''}</p><p class="meta" data-m="${c.id}"></p>`;
-      card.onclick = () => { g.trackId = c.id; cards.querySelectorAll('.card').forEach((x) => x.classList.remove('sel')); card.classList.add('sel'); };
+      card.tabIndex = 0; card.setAttribute('role', 'radio'); card.setAttribute('aria-checked', String(g.trackId === c.id));
+      card.innerHTML = `<h3>${c.name}</h3><svg data-t="${c.id}" viewBox="0 0 200 120"></svg><p class="meta" data-m="${c.id}"></p><p>${BLURB[c.id] || ''}</p>`;
+      card.onclick = () => { g.trackId = c.id; cards.querySelectorAll('.card').forEach((x) => { x.classList.remove('sel'); x.setAttribute('aria-checked', 'false'); }); card.classList.add('sel'); card.setAttribute('aria-checked', 'true'); };
+      card.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); card.onclick(); } };
       cards.appendChild(card);
     }
     body.appendChild(cards);
@@ -132,9 +152,9 @@ export class Menu {
       const id = ids.shift(); if (!id || !cards.isConnected) return;
       const info = this.trackInfo(id);
       const svg = cards.querySelector(`svg[data-t="${id}"]`);
-      if (svg) svg.innerHTML = `<path d="${info.path}" fill="none" stroke="#e9ecf2" stroke-width="3" stroke-linejoin="round"/><circle cx="${info.start[0]}" cy="${info.start[1]}" r="4" fill="#e10600"/>`;
+      if (svg) svg.innerHTML = `<path d="${info.path}" fill="none" stroke-width="3.2" stroke-linejoin="round"/><circle cx="${info.start[0]}" cy="${info.start[1]}" r="4.2"/>`;
       const m = cards.querySelector(`[data-m="${id}"]`);
-      if (m) m.textContent = `${(info.length / 1000).toFixed(2)} km · ${info.corners} corners · ${info.drs} DRS · ${info.maxElev.toFixed(0)} m elevation`;
+      if (m) m.textContent = `${(info.length / 1000).toFixed(2)} km, ${info.corners} corners, ${info.drs} DRS ${info.drs === 1 ? 'zone' : 'zones'}, ${info.maxElev.toFixed(0)} m climb`;
       setTimeout(next, 16);
     };
     setTimeout(next, 30);
@@ -152,8 +172,14 @@ export class Menu {
   }
   tabCar(body, g) {
     const teams = el('div', 'teams');
-    TEAMS.forEach((t, i) => { const d = el('div', 'team' + (g.team === i ? ' sel' : ''), `<i style="background:${hex(t.color)}"></i>${t.name}`); d.onclick = () => { g.team = i; this.game.previewTeam(i); teams.querySelectorAll('.team').forEach((x, k) => x.classList.toggle('sel', k === i)); }; teams.appendChild(d); });
-    body.append(el('div', 'sub', 'Livery (cosmetic – every team drives the same physics-identical car)'), teams, el('div', 'sub', 'Setup'));
+    TEAMS.forEach((t, i) => {
+      const d = el('div', 'team' + (g.team === i ? ' sel' : ''), `<i style="--a:${hex(t.color)};--b:${hex(t.accent)}"></i>${t.name}`);
+      d.tabIndex = 0; d.setAttribute('role', 'radio'); d.setAttribute('aria-checked', String(g.team === i));
+      d.onclick = () => { g.team = i; this.game.previewTeam(i); setTeamColour(i); teams.querySelectorAll('.team').forEach((x, k) => { x.classList.toggle('sel', k === i); x.setAttribute('aria-checked', String(k === i)); }); };
+      d.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); d.onclick(); } };
+      teams.appendChild(d);
+    });
+    body.append(el('div', 'groupl', 'Livery. Every team drives the same car; only the paint differs.'), teams, el('div', 'groupl', 'Car setup'));
     const S = this.settings.data.setup;
     body.append(
       this.slider('Front wing', 0, 10, 1, () => S.frontWing, (v) => { S.frontWing = v; }, (v) => v),
@@ -163,7 +189,7 @@ export class Menu {
       this.slider('Differential on-throttle lock', 0, 1, 0.05, () => S.diffPower, (v) => { S.diffPower = v; }, (v) => Math.round(v * 100) + '%'),
       this.slider('Engine braking map', 0, 1, 0.05, () => S.engineBraking, (v) => { S.engineBraking = v; }, (v) => Math.round(v * 100) + '%'),
     );
-    body.append(el('div', 'sub', 'More downforce = faster in corners and more stable under braking, but lower top speed. A rearward brake bias brakes harder but makes the rear unstable.'));
+    body.append(el('div', 'sub', 'More wing gives more grip in corners and stability under braking, but a lower top speed. Moving the brake bias rearward stops harder but makes the rear unstable.'));
   }
   tabRules(body, g) {
     const track = CIRCUITS.find((c) => c.id === g.trackId) || CIRCUITS[0];
@@ -182,7 +208,7 @@ export class Menu {
       this.slider('Practice length (min)', 3, 60, 1, () => g.practiceMinutes, (v) => { g.practiceMinutes = v; }, (v) => v),
       this.select('Default camera', [['chase', 'Chase'], ['cockpit', 'Cockpit'], ['tcam', 'T-cam'], ['top', 'Top'], ['nose', 'Nose']], () => g.camera, (v) => { g.camera = v; }),
     );
-    body.append(el('div', 'sub', `${track.name}: lap ≈ ${(track.lengthM / 1000).toFixed(2)} km. Full race distance would be ${Math.round(305000 / track.lengthM)} laps.`));
+    body.append(el('div', 'sub', `${track.name}: one lap is about ${(track.lengthM / 1000).toFixed(2)} km. A full Grand Prix distance would be ${Math.round(305000 / track.lengthM)} laps.`));
   }
   tabAssists(body) {
     const A = this.settings.data.assists;
@@ -200,9 +226,9 @@ export class Menu {
   // ---------------------------------------------------------------- CHAMPIONSHIP
   showChampionship() {
     const ch = this.game.championship;
-    const s = this.show('solid'); s.append(el('div', 'title', '<b>Championship</b>'));
+    const s = this.show('solid'); s.append(el('div', 'title', 'Championship'));
     if (!ch.state || ch.state.finished) {
-      if (ch.state && ch.state.finished) { const p = el('div', 'panel'); const d = ch.driverStandings(); p.innerHTML = `<h3>Season complete – champion: ${d[0] ? d[0].name : '-'}</h3>`; s.append(p, this.standingsPanel(ch)); }
+      if (ch.state && ch.state.finished) { const p = el('div', 'panel'); const d = ch.driverStandings(); p.innerHTML = `<h3>Season complete. Champion: ${d[0] ? d[0].name : '-'}</h3>`; s.append(p, this.standingsPanel(ch)); }
       const p = el('div', 'panel'); p.append(el('div', 'sub', 'Six circuits, points for the top 10 (25-18-15-12-10-8-6-4-2-1). Standings are saved on this device.'));
       const cfg = { laps: this.settings.data.game.laps, difficulty: this.settings.data.game.difficulty, team: this.settings.data.game.team, aiCount: this.settings.data.game.aiCount, weather: 'dynamic' };
       p.append(
@@ -213,14 +239,14 @@ export class Menu {
         this.slider('Opponents', 5, 19, 1, () => cfg.aiCount, (v) => { cfg.aiCount = v; }, (v) => v),
       );
       s.append(p);
-      const f = el('div', 'footer'); f.append(this.btn('◀ Back', () => this.showMain(), 'small'), this.btn('Start new season', () => { ch.start(cfg); this.showChampionship(); }, 'primary small')); s.append(f);
+      const f = el('div', 'footer'); f.append(this.btn('Start new season', () => { ch.start(cfg); this.showChampionship(); }, 'primary small'), this.btn('Back', () => this.showMain(), 'small ghost')); s.append(f);
       return;
     }
     const st = ch.state;
-    const cal = el('div', 'panel'); cal.innerHTML = '<h3>Calendar</h3>' + st.calendar.map((id, i) => { const c = CIRCUITS.find((x) => x.id === id); return `<div class="row"><b>${i + 1}.</b> ${c ? c.name : id} ${i < st.round ? '✔' : i === st.round ? '◀ next' : ''}</div>`; }).join('');
+    const cal = el('div', 'panel'); cal.innerHTML = '<h3>Calendar</h3>' + st.calendar.map((id, i) => { const c = CIRCUITS.find((x) => x.id === id); return `<div class="row"><b>${i + 1}.</b> ${c ? c.name : id} <span class="sub" style="margin:0">${i < st.round ? 'done' : i === st.round ? 'next' : ''}</span></div>`; }).join('');
     s.append(cal, this.standingsPanel(ch));
     const f = el('div', 'footer');
-    f.append(this.btn('◀ Back', () => this.showMain(), 'small'), this.btn(`Start round ${st.round + 1}: ${(CIRCUITS.find((c) => c.id === ch.currentTrack) || {}).name}`, () => this.game.startChampionshipRound(), 'primary small'), this.btn('Abandon season', () => { ch.abandon(); this.showChampionship(); }, 'small'));
+    f.append(this.btn(`Start round ${st.round + 1}: ${(CIRCUITS.find((c) => c.id === ch.currentTrack) || {}).name}`, () => this.game.startChampionshipRound(), 'primary small'), this.btn('Back', () => this.showMain(), 'small'), this.btn('Abandon season', () => { ch.abandon(); this.showChampionship(); }, 'small ghost'));
     s.append(f);
   }
   standingsPanel(ch) {
@@ -236,14 +262,14 @@ export class Menu {
     const D = this.settings.data;
     const s = this.show('solid'); s.append(el('div', 'title', 'Settings'));
     const tabs = el('div', 'tabs');
-    for (const [id, name] of [['graphics', 'Graphics & performance'], ['audio', 'Audio'], ['controls', 'Controls'], ['touch', 'Touch']]) { const t = el('button', 'tab' + (tab === id ? ' on' : ''), name); t.onclick = () => this.showSettings(id, back); tabs.appendChild(t); }
+    for (const [id, name] of [['graphics', 'Graphics and performance'], ['audio', 'Audio'], ['controls', 'Controls'], ['touch', 'Touch']]) { const t = el('button', 'tab' + (tab === id ? ' on' : ''), name); t.onclick = () => this.showSettings(id, back); tabs.appendChild(t); }
     s.appendChild(tabs);
     const body = el('div', 'panel'); s.appendChild(body);
     const perf = this.game.perf;
     if (tab === 'graphics') {
       body.append(
         this.select('Graphics profile', [['auto', `Auto (${perf.qualityName()})`], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High']], () => D.graphics, (v) => { D.graphics = v; perf.level = 0; this.game.renderer.onPerfChange(); }),
-        this.select('Target frame rate', [['auto', `Auto (${perf.targetFps} fps)`], [30, '30 fps – battery saver'], [60, '60 fps – recommended'], [90, '90 fps'], [120, '120 fps']], () => D.fps, (v) => { D.fps = v; }),
+        this.select('Target frame rate', [['auto', `Auto (${perf.targetFps} fps)`], [30, '30 fps, saves battery'], [60, '60 fps, recommended'], [90, '90 fps'], [120, '120 fps']], () => D.fps, (v) => { D.fps = v; }),
         this.slider('Max render resolution', 0.5, 1, 0.05, () => D.resolution, (v) => { D.resolution = v; perf.setScale(Math.min(perf.scale, v)); this.game.renderer.applyScale(); }, (v) => Math.round(v * 100) + '%'),
         this.toggle('Dynamic resolution', () => D.dynamicResolution, (v) => { D.dynamicResolution = v; }),
         this.toggle('Thermal / sustained-load protection', () => D.thermalGuard, (v) => { D.thermalGuard = v; }),
@@ -251,7 +277,7 @@ export class Menu {
         this.select('Speed units', [['kmh', 'km/h'], ['mph', 'mph']], () => D.ui.units, (v) => { D.ui.units = v; }),
         this.slider('HUD size', 0.6, 1.6, 0.1, () => D.ui.hudScale, (v) => { D.ui.hudScale = v; this.game.hud.setScale(v); }, (v) => v.toFixed(1)),
       );
-      body.append(el('div', 'sub', `Detected: ${perf.dev.mobile ? 'mobile' : 'desktop'} · ${perf.dev.cores} cores · display ≈ ${perf.refreshHz} Hz · current profile ${perf.qualityName()} · governor level ${perf.level} · render scale ${(perf.scale * 100).toFixed(0)}%. The game lowers resolution, then shadows, then frame rate if the device cannot keep up or reports heat; it never bypasses OS thermal control.`));
+      body.append(el('div', 'sub', `This device: ${perf.dev.mobile ? 'mobile' : 'desktop'}, ${perf.dev.cores} cores, display about ${perf.refreshHz} Hz. Current profile ${perf.qualityName()}, governor level ${perf.level}, render scale ${(perf.scale * 100).toFixed(0)}%. If the device cannot keep up or reports heat, the game lowers resolution first, then shadows, then frame rate; it never bypasses the system's thermal control.`));
     } else if (tab === 'audio') {
       const A = D.audio;
       body.append(
@@ -285,8 +311,8 @@ export class Menu {
         b.onclick = () => { b.textContent = 'press a key…'; this.game.input.startRebind(a, () => this.showSettings('controls', back)); };
         row.append(b); kl.appendChild(row);
       }
-      body.append(el('h3', null, 'Keyboard bindings'), kl, el('div', 'sub', 'Gamepad (standard layout): RT throttle · LT brake · left stick steer · RB/LB shift · X DRS · Y camera · A pit limiter · B replay · Start pause · D-pad brake bias / ERS / pit.'));
-      const r = this.btn('Reset all bindings & controls', () => { Object.assign(D.keys, JSON.parse(JSON.stringify(DEFAULT_KEYS))); this.settings.save(); this.game.input.rebuildKeymap(); this.showSettings('controls', back); }, 'small');
+      body.append(el('h3', null, 'Keyboard'), kl, el('div', 'sub', 'Gamepad (standard layout): RT throttle, LT brake, left stick steers, RB/LB shift, X DRS, Y camera, A pit limiter, B replay, Start pauses, D-pad for brake bias, ERS and pit.'));
+      const r = this.btn('Reset bindings and controls', () => { Object.assign(D.keys, JSON.parse(JSON.stringify(DEFAULT_KEYS))); this.settings.save(); this.game.input.rebuildKeymap(); this.showSettings('controls', back); }, 'small');
       body.append(r);
     } else {
       const C = D.controls, T = D.touch;
@@ -297,23 +323,30 @@ export class Menu {
         this.slider('Control size', 0.6, 1.5, 0.05, () => T.scale, (v) => { T.scale = v; this.game.touch.apply(); }, (v) => v.toFixed(2)),
       );
       const row = el('div', 'row');
-      row.append(this.btn('Edit layout (move / resize / opacity per button)', () => { this.hide(); this.game.editTouchLayout(); }, 'small'), this.btn('Reset layout', () => { this.game.touch.resetLayout(); this.toast('Layout reset'); }, 'small'));
-      body.append(row, el('div', 'sub', 'GAS (bottom right) and BRAKE (left of it) are plain hold-buttons; steering is on the left. All buttons work at the same time (multi-touch). External gamepads work through the Gamepad API.'));
+      row.append(this.btn('Edit button layout', () => { this.hide(); this.game.editTouchLayout(); }, 'small'), this.btn('Reset layout', () => { this.game.touch.resetLayout(); this.toast('Layout reset'); }, 'small ghost'));
+      body.append(row, el('div', 'sub', 'In the editor, drag a button to move it and use the sliders to set its size and opacity. GAS (bottom right) and BRAKE (left of it) are hold buttons; steering is on the left. All buttons work together with multi-touch, and external gamepads work too.'));
     }
-    const f = el('div', 'footer'); f.append(this.btn('◀ Back', () => { this.settings.save(); this.game.input.rebuildKeymap(); this.game.hud.setScale(D.ui.hudScale); if (back) back(); else this.showMain(); }, 'small')); s.appendChild(f);
+    const f = el('div', 'footer'); f.append(this.btn('Back', () => { this.settings.save(); this.game.input.rebuildKeymap(); this.game.hud.setScale(D.ui.hudScale); if (back) back(); else this.showMain(); }, 'small')); s.appendChild(f);
   }
 
   // ---------------------------------------------------------------- PAUSE
   showPause() {
     const s = this.show('dim');
-    s.append(el('div', 'title', 'Paused'));
+    const rm = this.game.rm, p = rm && rm.player;
+    const head = el('div', 'boardhead');
+    if (p) {
+      const race = rm.cfg.mode === 'race';
+      head.innerHTML = pitBoard(race ? 'Race' : 'Session', '#' + (p.number ?? ''), [['P', p.pos || '-', '/' + rm.drivers.length], ['L', race ? Math.min(rm.totalLaps, p.lapsCompleted + 1) : p.lapsCompleted, race ? '/' + rm.totalLaps : '']]);
+    }
+    const tw = el('div'); tw.append(el('div', 'title', 'Paused'), el('div', 'sub', rm ? (CIRCUITS.find((c) => c.id === rm.cfg.trackId) || {}).name || '' : ''));
+    head.append(tw); s.append(head);
     const m = el('div', 'menu');
     m.append(
       this.btn('Resume', () => this.game.resume(), 'primary'),
       this.btn('Restart session', () => this.game.restart()),
       this.btn('Settings', () => this.showSettings('graphics', () => this.showPause())),
       this.btn('Controls', () => this.showSettings('controls', () => this.showPause())),
-      this.btn('Quit to menu', () => this.game.quit()),
+      this.btn('Quit to main menu', () => this.game.quit()),
     );
     s.appendChild(m);
   }
@@ -323,7 +356,13 @@ export class Menu {
     const mode = rm.cfg.mode;
     const s = this.show('solid');
     const title = { race: 'Race classification', quali: 'Qualifying result', practice: 'Practice result', timetrial: 'Time trial' }[mode];
-    s.append(el('div', 'title', title));
+    const me = rows.find((r) => r.driver.isPlayer);
+    const head = el('div', 'boardhead');
+    if (me) head.innerHTML = pitBoard(mode === 'race' ? 'Finish' : 'Result', '#' + (me.number ?? ''), [['P', me.status === 'dnf' ? 'DNF' : me.pos, '/' + rows.length]]);
+    const tw = el('div'); tw.append(el('div', 'title', title));
+    const tname = (CIRCUITS.find((c) => c.id === rm.cfg.trackId) || {}).name || '';
+    tw.append(el('div', 'sub', me && isFinite(me.best) ? `${tname}. Your best lap: ${fmtTime(me.best)}` : tname));
+    head.append(tw); s.append(head);
     const p = el('div', 'panel');
     const hdr = mode === 'race' ? '<tr><th>Pos</th><th>Driver</th><th>Team</th><th>Laps</th><th>Time / gap</th><th>Best</th><th>Stops</th><th>Pen</th><th>Pts</th></tr>' : '<tr><th>Pos</th><th>Driver</th><th>Team</th><th>Laps</th><th>Best lap</th><th>Gap</th></tr>';
     const lines = rows.map((r) => {
@@ -338,12 +377,12 @@ export class Menu {
     s.appendChild(p);
     const f = el('div', 'footer');
     const champ = this.game.championship;
-    if (mode === 'race' && this.game.inChampionship) f.append(this.btn('Championship standings ▶', () => { this.game.finishChampionshipRound(rows); }, 'primary small'));
+    if (mode === 'race' && this.game.inChampionship) f.append(this.btn('Championship standings', () => { this.game.finishChampionshipRound(rows); }, 'primary small'));
     else {
-      if (mode === 'quali') f.append(this.btn('Race from this grid ▶', () => this.game.startRaceFromQuali(rows), 'primary small'));
+      if (mode === 'quali') f.append(this.btn('Race from this grid', () => this.game.startRaceFromQuali(rows), 'primary small'));
       f.append(this.btn('Restart', () => this.game.restart(), (mode === 'quali' ? '' : 'primary ') + 'small'));
     }
-    f.append(this.btn('Watch replay', () => this.game.startReplay(), 'small'), this.btn('Menu', () => this.game.quit(), 'small'));
+    f.append(this.btn('Watch replay', () => this.game.startReplay(), 'small'), this.btn('Main menu', () => this.game.quit(), 'small ghost'));
     s.appendChild(f);
   }
 }

@@ -155,12 +155,12 @@ export class Game {
   buildReplayBar() {
     const bar = document.createElement('div'); bar.className = 'replaybar'; this.replayBar = bar;
     const mk = (txt, fn) => { const b = document.createElement('button'); b.className = 'btn small'; b.textContent = txt; b.onclick = fn; bar.appendChild(b); return b; };
-    const play = mk('⏸', () => { this.replay.playing = !this.replay.playing; play.textContent = this.replay.playing ? '⏸' : '▶'; });
+    const play = mk('Pause', () => { this.replay.playing = !this.replay.playing; play.textContent = this.replay.playing ? 'Pause' : 'Play'; });
     mk('¼×', () => { this.replay.speed = 0.25; }); mk('1×', () => { this.replay.speed = 1; }); mk('2×', () => { this.replay.speed = 2; });
     const sc = document.createElement('input'); sc.type = 'range'; sc.min = 0; sc.max = 1000; sc.value = 0; bar.appendChild(sc); this.replayScrub = sc;
     sc.oninput = () => { this.replay.t = (sc.value / 1000) * this.replay.dur; };
-    mk('Car ▶', () => { const R = this.replay; R.focus = (R.focus + 1) % R.n; this.renderer.focus = R.proxies[R.focus]; });
-    mk('Cam', () => { this.replay.tv = !this.replay.tv; });
+    mk('Next car', () => { const R = this.replay; R.focus = (R.focus + 1) % R.n; this.renderer.focus = R.proxies[R.focus]; });
+    mk('TV camera', () => { this.replay.tv = !this.replay.tv; });
     mk('Exit', () => this.exitReplay());
     this.root.appendChild(bar);
   }

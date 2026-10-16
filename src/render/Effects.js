@@ -1,12 +1,12 @@
 // Effects: pooled particle systems (smoke / dust / sparks / spray), skid marks (instanced ring buffer), flying debris,
 // and GPU-animated rain. All buffers are preallocated; emission is budgeted so FPS does not depend on how wrecked the race is.
 import * as THREE from 'three';
-import { smokeTexture, skidTexture } from './Textures.js';
+import { smokeTexture, skidTexture, sparkTexture } from './Textures.js';
 import { makeRng } from '../core/math.js';
 
 const VERT = `
-attribute float aSize; attribute vec4 aColor; varying vec4 vColor; uniform float uScale;
-void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0); vColor = aColor; vColor.a *= smoothstep(1.2, 6.0, -mv.z); gl_Position = projectionMatrix * mv; gl_PointSize = clamp(aSize * uScale / max(0.1,-mv.z), 0.0, 220.0); }`;
+attribute float aSize; attribute vec4 aColor; varying vec4 vColor; uniform float uScale; uniform vec2 uNear;
+void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0); vColor = aColor; vColor.a *= smoothstep(uNear.x, uNear.y, -mv.z); gl_Position = projectionMatrix * mv; gl_PointSize = clamp(aSize * uScale / max(0.1,-mv.z), 0.0, 220.0); }`;
 const FRAG = `
 uniform sampler2D map; varying vec4 vColor;
 void main(){ vec4 t = texture2D(map, gl_PointCoord); gl_FragColor = vec4(vColor.rgb, vColor.a * t.a); if (gl_FragColor.a < 0.01) discard; }`;
@@ -23,7 +23,7 @@ class Pool {
     g.setAttribute('aSize', new THREE.BufferAttribute(this.size, 1).setUsage(THREE.DynamicDrawUsage));
     g.setAttribute('aColor', new THREE.BufferAttribute(this.rgba, 4).setUsage(THREE.DynamicDrawUsage));
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
-    const m = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, uniforms: { map: { value: tex }, uScale: { value: 600 } }, transparent: true, depthWrite: false, blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending });
+    const m = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, uniforms: { map: { value: tex }, uScale: { value: 600 }, uNear: { value: new THREE.Vector2(1.2, 6.0) } }, transparent: true, depthWrite: false, blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending });
     this.points = new THREE.Points(g, m); this.points.frustumCulled = false; this.points.renderOrder = 5;
     this.geo = g; this.alive = 0; this.scaleAlpha = 1;
   }
@@ -66,11 +66,14 @@ export class Effects {
     this.q = q;
     const k = q.particles;
     if (this.smoke) { this.group.remove(this.smoke.points, this.dust.points, this.spark.points, this.spray.points); }
-    const tex = smokeTexture();
+    const tex = this.puffTex || (this.puffTex = smokeTexture()), stex = this.sparkTex || (this.sparkTex = sparkTexture());
     this.smoke = new Pool(Math.max(40, Math.round(500 * k)), tex, { gravity: 0.6, drag: 1.2 });
     this.dust = new Pool(Math.max(30, Math.round(300 * k)), tex, { gravity: -0.3, drag: 1.6 });
-    this.spark = new Pool(Math.max(30, Math.round(300 * k)), tex, { additive: true, gravity: -9, drag: 0.4 });
+    this.spark = new Pool(Math.max(30, Math.round(300 * k)), stex, { additive: true, gravity: -9, drag: 0.4 });
     this.spray = new Pool(Math.max(30, Math.round(400 * k)), tex, { gravity: -3, drag: 1.4 });
+    this.spray.scaleAlpha = 0.5; this.smoke.scaleAlpha = 0.8;
+    this.spray.points.material.uniforms.uNear.value.set(3.5, 16);   // spray is a mist further away, never a white blob on the lens
+    this.smoke.points.material.uniforms.uNear.value.set(2.0, 9.0);
     this.group.add(this.smoke.points, this.dust.points, this.spark.points, this.spray.points);
     // skid marks
     if (this.skidMesh) { this.group.remove(this.skidMesh); this.skidMesh.dispose(); }
@@ -169,13 +172,14 @@ export class Rain {
     g.setAttribute('aEnd', new THREE.BufferAttribute(end, 1));
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
     this.mat = new THREE.ShaderMaterial({
-      uniforms: { uCam: { value: new THREE.Vector3() }, uTime: { value: 0 }, uAlpha: { value: 0 }, uVel: { value: new THREE.Vector3(0, 0, 0) }, uColor: { value: new THREE.Color(0xbfd3e6) } },
+      uniforms: { uCam: { value: new THREE.Vector3() }, uTime: { value: 0 }, uAlpha: { value: 0 }, uVel: { value: new THREE.Vector3(0, 0, 0) }, uColor: { value: new THREE.Color(0xd2dce6) } },
       vertexShader: `attribute vec3 aSeed; attribute float aEnd; uniform vec3 uCam; uniform float uTime; uniform vec3 uVel; varying float vA;
         void main(){ vec3 box = vec3(36.0, 22.0, 36.0);
           float y = mod(aSeed.y * box.y - uTime * 22.0, box.y);
           vec3 p = vec3((aSeed.x - 0.5) * box.x, y - 4.0, (aSeed.z - 0.5) * box.z);
-          p += uCam; p -= uVel * 0.02 * aEnd; p.y += aEnd * 0.55; p.x += aEnd * 0.06;
-          vA = 0.35 + 0.4 * aSeed.x; gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0); }`,
+          p += uCam; p -= uVel * 0.02 * aEnd; p.y += aEnd * 0.8; p.x += aEnd * 0.05;
+          vec4 mv = viewMatrix * vec4(p, 1.0);
+          vA = (0.25 + 0.45 * aSeed.x) * mix(0.35, 1.0, aEnd) * smoothstep(0.8, 3.5, -mv.z); gl_Position = projectionMatrix * mv; }`,
       fragmentShader: `uniform float uAlpha; uniform vec3 uColor; varying float vA; void main(){ gl_FragColor = vec4(uColor, vA * uAlpha); }`,
       transparent: true, depthWrite: false,
     });

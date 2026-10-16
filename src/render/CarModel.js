@@ -8,6 +8,7 @@ import { TEAMS } from '../race/Roster.js';
 import { COMPOUNDS } from '../physics/TireModel.js';
 import { wrapPi } from '../core/math.js';
 import { buildParts, merge, tint, clean, wheelSpinGeo, wheelStaticGeo, discGeo, ringGeo, topAt, MONO, COL } from './CarParts.js';
+import { applyLivery, applyDetail, bakeLivery, bakeMarkers, liveryOf } from './Livery.js';
 
 const DETAIL = { low: 0, medium: 1, high: 2, std: 1 };
 const partsCache = new Map();
@@ -26,12 +27,17 @@ function teamMaterials(teamIdx, quality) {
   if (matCache.has(key)) return matCache.get(key);
   const t = TEAMS[teamIdx % TEAMS.length], low = quality === 'low';
   const std = low ? (p) => new THREE.MeshLambertMaterial({ color: p.color, vertexColors: !!p.vertexColors }) : (p) => new THREE.MeshStandardMaterial(p);
+  // paint finish per team: gloss (clear coat), metal flake (silver) or matte (onyx)
+  const L = liveryOf(teamIdx), hi = quality === 'high';
+  const paint = L.finish === 'matte' ? { metalness: 0.05, roughness: 0.58, clearcoat: 0.15, clearcoatRoughness: 0.5 }
+    : L.finish === 'metal' ? { metalness: 0.6, roughness: 0.3, clearcoat: hi ? 1.0 : 0.6, clearcoatRoughness: 0.08 }
+      : { metalness: 0.12, roughness: 0.34, clearcoat: hi ? 1.0 : 0.6, clearcoatRoughness: 0.06 };
   const m = {
-    body: low ? std({ color: t.color }) : new THREE.MeshPhysicalMaterial({ color: t.color, metalness: 0.35, roughness: 0.28, clearcoat: quality === 'high' ? 1.0 : 0.5, clearcoatRoughness: 0.1 }),
-    accent: std({ color: t.accent, metalness: 0.2, roughness: 0.4 }),
-    detail: std({ color: 0xffffff, vertexColors: true, metalness: 0.45, roughness: 0.42 }),     // carbon / metal / black parts, colours baked into the vertices
-    helmet: std({ color: 0xffffff, vertexColors: true, metalness: 0.15, roughness: 0.28 }),
-    tyre: std({ color: 0xffffff, vertexColors: true, metalness: 0.2, roughness: 0.75 }),
+    body: applyLivery(low ? std({ color: t.color }) : new THREE.MeshPhysicalMaterial({ color: t.color, ...paint }), teamIdx),
+    accent: std({ color: t.accent, metalness: 0.1, roughness: 0.38 }),
+    detail: applyDetail(std({ color: 0xffffff, vertexColors: true, metalness: 0.3, roughness: 0.42 }), teamIdx),     // carbon / metal / black parts, colours baked into the vertices
+    helmet: std({ color: 0xffffff, vertexColors: true, metalness: 0.1, roughness: 0.22 }),
+    tyre: std({ color: 0xffffff, vertexColors: true, metalness: 0.0, roughness: 0.9 }),
     light: new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true }),
   };
   matCache.set(key, m); return m;
@@ -50,12 +56,12 @@ const numTex = new Map();
 function numberTexture(num, teamIdx) {
   const key = num + ':' + teamIdx;
   if (numTex.has(key)) return numTex.get(key);
-  const t = TEAMS[teamIdx % TEAMS.length], c = document.createElement('canvas'); c.width = c.height = 96;
-  const g = c.getContext('2d'), hex = (v) => '#' + v.toString(16).padStart(6, '0');
-  g.fillStyle = hex(t.accent); g.beginPath(); g.roundRect ? g.roundRect(4, 4, 88, 88, 18) : g.rect(4, 4, 88, 88); g.fill();
-  g.lineWidth = 5; g.strokeStyle = hex(t.color); g.stroke();
-  const lum = ((t.accent >> 16 & 255) * 0.3 + (t.accent >> 8 & 255) * 0.59 + (t.accent & 255) * 0.11);
-  g.fillStyle = lum > 140 ? '#101114' : '#ffffff'; g.font = 'bold 54px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(String(num), 48, 52);
+  const t = TEAMS[teamIdx % TEAMS.length], c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d');
+  // race number on a chalk plate (the identity's plate), team colour keyline; numerals in the UI face
+  g.fillStyle = '#f2efe6'; g.beginPath(); g.roundRect ? g.roundRect(8, 8, 112, 112, 14) : g.rect(8, 8, 112, 112); g.fill();
+  g.lineWidth = 7; g.strokeStyle = '#' + t.color.toString(16).padStart(6, '0'); g.stroke();
+  g.fillStyle = '#141518'; g.font = '700 84px "Barlow Condensed", "Arial Narrow", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(String(num), 64, 70, 100);
   const tx = new THREE.CanvasTexture(c); tx.colorSpace = THREE.SRGBColorSpace; tx.anisotropy = 4;
   numTex.set(key, tx); return tx;
 }
@@ -73,8 +79,8 @@ const lodGeoCache = new Map();
 function lodGeometry(teamIdx) {
   if (lodGeoCache.has(teamIdx)) return lodGeoCache.get(teamIdx);
   const P = partsFor(0), t = TEAMS[teamIdx % TEAMS.length];
-  const body = merge([...P.body.map((g) => tint(clean(g.clone()), t.color)), ...P.accent.map((g) => tint(clean(g.clone()), t.accent))]);
-  const out = merge([body, P.detail, P.fwL, P.fwR, P.fwNose, P.rwFixed, tint(clean(P.rwFlap.clone().translate(0, 1.0, -2.4)), COL.carbon), helmetGeo(teamIdx, 0)]);
+  const body = merge([...P.body.map((g) => bakeLivery(clean(g.clone()), teamIdx)), ...P.accent.map((g) => tint(clean(g.clone()), t.accent))]);
+  const out = bakeMarkers(merge([body, P.detail, P.fwL, P.fwR, P.fwNose, P.rwFixed, tint(clean(P.rwFlap.clone().translate(0, 1.0, -2.4)), COL.carbon), helmetGeo(teamIdx, 0)]), teamIdx);
   lodGeoCache.set(teamIdx, out); return out;
 }
 const wheelLod = new Map();
@@ -119,11 +125,11 @@ export class CarVisual {
     // ---------------- LOD2: one static mesh
     const l2 = new THREE.Group(); this.l2 = l2; this.root.add(l2);
     const g2 = merge([lodGeometry(this.teamIdx), ...[0, 1, 2, 3].map((i) => wheelLodGeo(i >= 2, Math.sign(WY[i]), 'medium').clone().translate(WY[i], CAR.Rw[i], WX[i]))]);
-    l2.add(new THREE.Mesh(g2, ghostMat || vm));
+    l2.add(new THREE.Mesh(g2, ghostMat || vm)); this.ownGeo = g2; this.ownMat = vm;
     this.fwLost = [false, false]; this.rwLost = false;
     // camera anchors (driver eyes, T-cam above the airbox, nose cam)
     const mkA = (x, y, z) => { const a = new THREE.Object3D(); a.position.set(x, y, z); this.body.add(a); return a; };
-    this.anchors = { cockpit: mkA(0, 0.86, 0.22), tcam: mkA(0, 1.18, -0.75), nose: mkA(0, 0.36, 1.95) };
+    this.anchors = { cockpit: mkA(0, 0.8, 0.1), tcam: mkA(0, 1.18, -0.75), nose: mkA(0, 0.36, 1.95) };
   }
 
   /** the detailed car; built the first time something needs it (most cars on the grid are far away and never do) */
@@ -139,7 +145,7 @@ export class CarVisual {
     this.fwL = mesh(P.fwL, M.detail, D >= 1); this.fwR = mesh(P.fwR, M.detail, D >= 1); l0.add(this.fwL, this.fwR, mesh(P.fwNose, M.detail, false));
     this.rwFlap = new THREE.Group(); this.rwFlap.position.set(0, 1.0, -2.4); this.rwFlap.add(mesh(P.rwFlap, M.detail)); if (P.rwFlap2) this.rwFlap.add(mesh(P.rwFlap2, M.detail, false)); l0.add(this.rwFlap);
     this.helmetMesh = mesh(helmetGeo(this.teamIdx, D), M.helmet, false); l0.add(this.helmetMesh);
-    if (this.number && !this.ghost && D >= 1 && typeof document !== 'undefined') l0.add(decalMesh(this.number, this.teamIdx));
+    if (this.number && !this.ghost && D >= 1 && typeof document !== 'undefined') { this.decal = decalMesh(this.number, this.teamIdx); l0.add(this.decal); }
     // wheels: pivot (steering) -> spin (rolling) -> flip (mirrors right-hand wheels) ; non-rolling parts (upright, brake duct, calipers) hang on the pivot
     this.wheels = [];
     for (let i = 0; i < 4; i++) {
@@ -147,7 +153,7 @@ export class CarVisual {
       const pivot = new THREE.Group(), spin = new THREE.Group(), flip = new THREE.Group();
       if (side < 0) flip.rotation.y = Math.PI;
       const tire = mesh(G.spin, M.tyre);
-      const discMat = new THREE.MeshBasicMaterial({ color: 0x331100 });
+      const discMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.07, 0.07, 0.075) });
       const disc = new THREE.Mesh(G.disc, ghostMat || discMat);
       const ring = new THREE.Mesh(G.ring, ghostMat || new THREE.MeshBasicMaterial({ color: 0xffd23b, side: THREE.DoubleSide }));
       flip.add(tire, disc, ring); spin.add(flip); pivot.add(spin);
@@ -157,6 +163,15 @@ export class CarVisual {
       this.wheels.push({ pivot, spin, ring, discMat, disc, R, ringMat: ring.material, tire });
     }
     this.compound = null;
+  }
+
+  /** free what this car owns (its merged far-LOD mesh, decal and per-wheel materials); shared part geometry stays cached */
+  dispose() {
+    if (this.ownGeo) this.ownGeo.dispose();
+    if (this.ownMat) this.ownMat.dispose();
+    if (this.ghostMat) this.ghostMat.dispose();
+    if (this.decal) { this.decal.geometry.dispose(); this.decal.material.dispose(); }
+    for (const w of this.wheels) { w.discMat.dispose(); w.ringMat.dispose(); }
   }
 
   setLod(l) {
@@ -203,10 +218,11 @@ export class CarVisual {
         w.pivot.position.y = w.R + lift;
         const gone = car.damage.wheelOff[i] === 1;
         w.pivot.visible = !gone;
-        // brake disc glow
+        // brake disc glow: cold iron grey -> dull red -> orange -> yellow-white (HDR, so the hot disc survives tone mapping)
         const T = car.brakes.temp[i];
-        const g = Math.max(0, Math.min(1, (T - 350) / 650));
-        w.discMat.color.setRGB(0.2 + g * 0.8, 0.07 + g * 0.35, 0.03 + g * 0.05);
+        const g = Math.max(0, Math.min(1, (T - 300) / 750));
+        if (g < 0.5) { const k = g * 2; w.discMat.color.setRGB(0.07 + k * 1.1, 0.07 + k * 0.1, 0.075 - k * 0.04); }
+        else { const k = (g - 0.5) * 2; w.discMat.color.setRGB(1.17 + k * 1.4, 0.17 + k * 1.05, 0.035 + k * 0.3); }
       }
       const d = car.damage;
       this.fwL.visible = d.fwL < 0.92; this.fwR.visible = d.fwR < 0.92;
