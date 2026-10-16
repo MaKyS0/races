@@ -5,7 +5,7 @@ const b = await launch(['--autoplay-policy=no-user-gesture-required']);
 const ctx = await b.newContext({ viewport: { width: 960, height: 540 } });
 const p = await ctx.newPage();
 const errs = []; p.on('pageerror', (e) => errs.push(e.message)); p.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
-await p.goto('http://localhost:4173/?autostart=1&track=monza&ai=5&quality=low&camera=chase');
+await p.goto('' + (process.env.BASE || 'http://localhost:4173/') + '?autostart=1&track=monza&ai=5&quality=low&camera=chase');
 await p.waitForFunction(() => window.__game && window.__game.rm && window.__game.state === 'playing', null, { timeout: 120000 });
 const results = []; const ok = (n, c, x = '') => { results.push(c); console.log((c ? 'PASS ' : 'FAIL ') + n + (x ? '  ' + x : '')); };
 await p.evaluate(() => { const g = window.__game; g.audio.unlock(); g.fastForward(14); });
@@ -13,7 +13,7 @@ await p.waitForFunction(() => window.__game.audio.bankState !== 'loading' && win
 const st = await p.evaluate(() => { const a = window.__game.audio; return { ready: a.ready, bank: a.bankState, engines: a.bank ? [...a.bank.engines.keys()] : [], ctx: a.ctx && a.ctx.state }; });
 ok('audio context running', st.ready && st.ctx === 'running', JSON.stringify(st));
 const bankMode = st.bank === 'ready';
-console.log(bankMode ? 'mode: recorded engines' : 'mode: synthesised fallback engine (no public/audio installed)');
+console.log(bankMode ? 'mode: recorded engines' : 'mode: synthesised engine layers (no public/audio recordings installed)');
 if (bankMode) ok('engine bank decoded', st.engines.length > 0, st.engines.join(','));
 // analyser on the engine bus
 await p.evaluate(() => { const a = window.__game.audio; a.an = a.ctx.createAnalyser(); a.an.fftSize = 4096; a.engineBus.connect(a.an); });

@@ -46,16 +46,18 @@ export class EngineVoice {
       this.lfo = ctx.createOscillator(); this.lfo.type = 'square'; this.lfo.frequency.value = 26;
       this.lfoG = ctx.createGain(); this.lfoG.gain.value = 0; this.lfo.connect(this.lfoG); this.lfoG.connect(this.chop.gain); this.lfo.start();
     }
-    this.slots = engine.layers.map(() => null);
-    this.idleT = engine.layers.map(() => 0);
+    this.nOn = engine.layers.length; this.hasOff = !!engine.offLayers;
+    this.all = this.hasOff ? engine.layers.concat(engine.offLayers) : engine.layers;   // [throttle-open layers..., over-run layers...]
+    this.slots = this.all.map(() => null);
+    this.idleT = this.all.map(() => 0);
     this.limiter = false;
   }
   _ensure(i, now) {
     let s = this.slots[i];
     if (s) return s;
-    const ctx = this.ctx, src = ctx.createBufferSource(); src.buffer = this.eng.layers[i].buffer; src.loop = true;
+    const ctx = this.ctx, src = ctx.createBufferSource(); src.buffer = this.all[i].buffer; src.loop = true;
     const g = ctx.createGain(); g.gain.value = 0; src.connect(g); g.connect(this.lp);
-    src.start(0, Math.random() * src.buffer.duration);
+    src.start(now, Math.random() * src.buffer.duration);
     return (this.slots[i] = { src, g });
   }
   /** rpm: effective (doppler-scaled) rpm; load 0..1 throttle; vol: linear gain; bright: 0..1 distance brightness */
@@ -64,15 +66,18 @@ export class EngineVoice {
     const L = this.eng.layers, n = L.length;
     const x = clamp(rpm, L[0].rpm * 0.55, L[n - 1].rpm * 1.6);
     const { a, b, wa, wb } = layerMix(L, x);
-    for (let i = 0; i < n; i++) {
-      const w = i === a ? wa : i === b ? wb : 0;   // (a === b -> wa = 1, wb = 0)
+    // throttle open / over-run: equal-power cross-fade between the two layer sets (a recorded bank has only the first)
+    const lo = this.hasOff ? clamp(0.2 + 0.8 * load, 0, 1) : 1, kOn = Math.sqrt(lo), kOff = Math.sqrt(1 - lo);
+    for (let i = 0; i < this.all.length; i++) {
+      const li = i % this.nOn, set = i < this.nOn ? kOn : kOff;
+      const w = (li === a ? wa : li === b ? wb : 0) * set;
       if (w > 0.002) {
         const s = this._ensure(i, now); this.idleT[i] = 0;
-        s.src.playbackRate.setTargetAtTime(x / L[i].rpm, now, 0.03);
+        s.src.playbackRate.setTargetAtTime(x / this.all[i].rpm, now, 0.03);
         s.g.gain.setTargetAtTime(w, now, 0.03);
       } else if (this.slots[i]) {
         const s = this.slots[i]; s.g.gain.setTargetAtTime(0, now, 0.03);
-        if ((this.idleT[i] += 1) > 30) { try { s.src.stop(); s.src.disconnect(); s.g.disconnect(); } catch (e) { /* already stopped */ } this.slots[i] = null; }
+        if ((this.idleT[i] += 1) > 30) { this._release(s, now); this.slots[i] = null; }
       }
     }
     // on-throttle: bright and loud; lift-off: dark, quieter
@@ -85,6 +90,8 @@ export class EngineVoice {
     if (this.lfo) this.lfoG.gain.setTargetAtTime(limiter ? 0.3 : 0, now, 0.01);
     this.limiter = limiter;
   }
+  /** stop a layer source slightly in the future (also right for an OfflineAudioContext, where 'now' is not the render position) */
+  _release(s, now) { try { s.src.onended = () => { try { s.src.disconnect(); s.g.disconnect(); } catch (e) { /* gone */ } }; s.src.stop(now + 0.1); } catch (e) { /* already stopped */ } }
   silence(now) { if (!this.dead) this.amp.gain.setTargetAtTime(0, now, 0.05); }
   dispose() {
     this.dead = true;

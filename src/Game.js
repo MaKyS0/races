@@ -316,7 +316,7 @@ export class Game {
       if ((this.perf.frames & 7) === 0) this.vignette.style.opacity = (0.5 + 0.4 * Math.min(1, rm.player.car.speed / 90)).toFixed(2);
       this.hud.update(rm, dt, this.input, this.perf, { blueFlag: this.blueFlag, fps: this.settings.data.ui.fps });
     }
-    this.audio.update(dt, rm, this.renderer.camera, car);
+    this.audio.update(dt, rm, this.renderer.camera, car, this.camCtl.mode);
     // ---- end of session
     if (rm.phase === 'finished' && rm.classification && !this.lastResultsShown) {
       this.finishTimer = this.finishTimer < 0 ? 2.5 : this.finishTimer;

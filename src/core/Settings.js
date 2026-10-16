@@ -20,7 +20,7 @@ export const DEFAULTS = {
   resolution: 1,               // manual render scale cap (0.5 .. 1)
   dynamicResolution: true,
   thermalGuard: true,
-  audio: { master: 0.8, engine: 0.9, effects: 0.8, engineSound: 'auto' },
+  audio: { master: 0.8, engine: 0.9, effects: 0.8, engineSound: 'auto', reverb: true },
   controls: {
     steerSensitivity: 1, steerLinearity: 1.25, throttleLinearity: 1, brakeLinearity: 1.1, deadzone: 0.08,
     keyboardSteerRate: 2.6, steerAssistKeyboard: true, touchMode: 'buttons', tilt: false, haptics: true,

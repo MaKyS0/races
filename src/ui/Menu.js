@@ -259,11 +259,14 @@ export class Menu {
         this.slider('Engine', 0, 1, 0.05, () => A.engine, (v) => { A.engine = v; this.game.audio.applyVolumes(); }, (v) => Math.round(v * 100) + '%'),
         this.slider('Effects', 0, 1, 0.05, () => A.effects, (v) => { A.effects = v; this.game.audio.applyVolumes(); }, (v) => Math.round(v * 100) + '%'),
       );
-      const ch = this.game.audio.engineChoices();
-      if (ch.length) {
-        body.append(this.select('Your engine sound (real recordings)', [['auto', 'By team'], ...ch], () => A.engineSound, (v) => { A.engineSound = v; }));
-        body.append(el('div', 'sub', 'Engine sounds are cut from real Formula 1 recordings (V10 1996/2005, V8 2006–2010) made at Goodwood by "Edvvc", licence CC BY-SA 3.0 – see Credits in the README / public/audio/CREDITS.txt. They are pitch-shifted to the engine rpm of this simulator; the recordings are not of the hybrid V6 cars.'));
-      } else body.append(el('div', 'sub', this.game.audio.ready ? 'Engine recordings are loading or not installed – using the synthesised engine.' : 'Press any button once to start the audio engine.'));
+      const ch = this.game.audio.engineChoices(), rec = !!this.game.audio.bank;
+      if (this.game.audio.ready) {
+        body.append(this.select('Your engine sound', [['auto', 'By team'], ...ch], () => A.engineSound, (v) => { A.engineSound = v; }));
+        body.append(this.toggle('Room reverb (not used on the Low profile)', () => A.reverb !== false, (v) => { A.reverb = v; }));
+        body.append(el('div', 'sub', rec
+          ? 'Engines marked V10/V8 with a year are cut from real Formula 1 recordings (CC BY-SA 3.0, "Edvvc", see public/audio/CREDITS.txt) and pitch-shifted to this simulator\'s rpm; the "(synth)" ones are computed by the game from a firing-order model and are not recordings.'
+          : 'No recordings are installed: every engine here ("synth") is computed by the game from a firing-order model (V6 hybrid, V8, V10, V12). They follow rpm, throttle and gear changes but are not recordings of real cars. Room reverb applies after a restart of the session.'));
+      } else body.append(el('div', 'sub', 'Press any button once to start the audio engine.'));
     } else if (tab === 'controls') {
       const C = D.controls;
       body.append(

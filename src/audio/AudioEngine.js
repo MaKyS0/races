@@ -1,11 +1,17 @@
-// AudioEngine: engines are REAL F1 recordings (EngineBank: rpm-pitched, cross-faded loop layers, see public/audio/CREDITS.txt);
-// tyre / brake / wind / rain / impact / UI sounds are synthesised (Web Audio). If the recordings cannot be loaded, the
-// original additive synth is used for engines (player: 4 oscillators; nearby AI cars: 2-oscillator voices with Doppler + pan).
-import { clamp } from '../core/math.js';
+// AudioEngine: engines play through EngineVoice (rpm-pitched, cross-faded seamless loop layers, throttle-open / over-run sets, pan +
+// doppler + distance for the opponents). The layers come from REAL F1 recordings when public/audio exists (EngineBank, see
+// public/audio/CREDITS.txt) and otherwise from EngineSynth (a procedural engine-order model: V6 hybrid / V8 / V10 / V12, NOT recordings).
+// Tyre / brake / wind / rain / impact / UI sounds are synthesised (Web Audio). The oldest fallback, if even buffers cannot be created,
+// is the original oscillator engine. A short synthetic room reverb (not on the Low profile) gives the engines some space.
+import { clamp, makeRng } from '../core/math.js';
 import { loadEngineBank, EngineVoice } from './EngineBank.js';
+import { SYNTH_SPECS, buildSynthEngine } from './EngineSynth.js';
 
 // which recording each (fictional) team's car uses when 'Engine sound' = automatic; ids from public/audio/manifest.json
 const TEAM_ENGINES = ['v8a', 'v10a', 'v8c', 'v10b', 'v8b', 'v8d', 'v10a', 'v8a', 'v8c', 'v10b'];
+// the synthesised engines used per team when no recordings are installed (the modern field is V6 hybrids; a few teams get another voice for variety)
+const TEAM_SYN = ['syn-v6', 'syn-v6', 'syn-v8', 'syn-v6', 'syn-v10', 'syn-v6', 'syn-v12', 'syn-v6', 'syn-v8', 'syn-v6'];
+const CAM_BRIGHT = { cockpit: 0.5, nose: 0.75, tcam: 0.95, chase: 1, top: 0.9 };   // camera -> how much of the exhaust crackle you hear
 
 export class AudioEngine {
   constructor(settings) {
@@ -15,6 +21,7 @@ export class AudioEngine {
     this.lastThr = 0; this.lastGear = 1; this.t = 0;
     this.bank = null; this.bankState = 'idle';   // idle | loading | ready | failed
     this.pVoice = null; this.pEngId = null; this.aiVoices = new Map();
+    this.synth = new Map(); this.synthFailed = false; this.lastDrs = 0;
   }
   /** loads the recordings once (asynchronously; procedural engines play until they are decoded) */
   loadBank() {
@@ -23,14 +30,31 @@ export class AudioEngine {
     const base = (typeof document !== 'undefined' && document.baseURI ? new URL('audio/', document.baseURI).href : 'audio/');
     loadEngineBank(this.ctx, base).then((b) => { this.bank = b; this.bankState = b ? 'ready' : 'failed'; }).catch(() => { this.bankState = 'failed'; });
   }
-  /** engine ids that are available (for the settings menu) */
-  engineChoices() { return this.bank ? [...this.bank.engines.values()].map((e) => [e.id, e.label]) : []; }
-  engineFor(car) {
-    if (!this.bank) return null;
-    const pick = this.settings.data.audio.engineSound;
-    const want = car.d && car.d.isPlayer && pick && pick !== 'auto' ? pick : TEAM_ENGINES[(car.d && car.d.def ? car.d.def.team : car.idx || 0) % TEAM_ENGINES.length];
-    return this.bank.engines.get(want) || this.bank.engines.values().next().value;
+  /** synthesised engines are built lazily (a few ms per layer): the default now, the rest one per timer tick right after */
+  getEngine(id) {
+    if (this.bank && this.bank.engines.has(id)) return this.bank.engines.get(id);
+    if (this.synth.has(id)) return this.synth.get(id);
+    const spec = SYNTH_SPECS.find((sp) => sp.id === id);
+    if (!spec || !this.ctx || this.synthFailed) return null;
+    try { const e = buildSynthEngine(this.ctx, spec); this.synth.set(id, e); return e; } catch (err) { this.synthFailed = true; return null; }
   }
+  prebuildSynth() {
+    const ids = SYNTH_SPECS.map((sp) => sp.id); let k = 0;
+    const next = () => { if (!this.ctx || this.synthFailed || k >= ids.length) return; this.getEngine(ids[k++]); setTimeout(next, 30); };
+    next();
+  }
+  /** engine ids that are available (for the settings menu) */
+  engineChoices() { return [...(this.bank ? [...this.bank.engines.values()].map((e) => [e.id, e.label]) : []), ...SYNTH_SPECS.map((sp) => [sp.id, sp.label])]; }
+  engineFor(car) {
+    const pick = this.settings.data.audio.engineSound, isP = !!(car.d && car.d.isPlayer);
+    const team = (car.d && car.d.def ? car.d.def.team : car.idx || 0);
+    let want = isP && pick && pick !== 'auto' ? pick : (this.bank ? TEAM_ENGINES : TEAM_SYN)[team % TEAM_SYN.length];
+    let e = this.getEngine(want);
+    if (!e) e = this.bank ? this.bank.engines.values().next().value : this.getEngine('syn-v6');
+    return e || null;
+  }
+  /** true when engines can be played through EngineVoice (recordings or the synthesised bank) */
+  voicesReady() { return !!(this.bank || (this.ready && !this.synthFailed && this.synth.size > 0)); }
   /** must be called from a user gesture on mobile/iOS */
   unlock() {
     if (this.ready) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
@@ -41,11 +65,24 @@ export class AudioEngine {
     this.build();
     this.applyVolumes();
     this.ready = true;
+    this.getEngine('syn-v6'); this.prebuildSynth();
     this.loadBank();
     if (this.ctx.state === 'suspended') this.ctx.resume();
   }
   setPaused(p) { this.paused = p; if (!this.ready) return; if (p) this.ctx.suspend(); else this.ctx.resume(); }
 
+  reverbIR(sec) {
+    const ctx = this.ctx, n = Math.floor(ctx.sampleRate * sec), b = ctx.createBuffer(2, n, ctx.sampleRate), rnd = makeRng(4242);
+    for (let c = 0; c < 2; c++) {
+      const d = b.getChannelData(c); let lp = 0;
+      for (let i = 0; i < n; i++) {
+        const t = i / n, k = 0.55 - 0.45 * t;                       // the low-pass closes as the tail decays
+        lp += k * ((rnd() * 2 - 1) - lp);
+        d[i] = lp * Math.pow(1 - t, 3.2) * (i < 160 ? i / 160 : 1);
+      }
+    }
+    return b;
+  }
   noiseBuffer(sec = 2) {
     const ctx = this.ctx, n = ctx.sampleRate * sec, b = ctx.createBuffer(1, n, ctx.sampleRate), d = b.getChannelData(0);
     let last = 0;
@@ -67,6 +104,15 @@ export class AudioEngine {
     this.master.connect(comp); comp.connect(ctx.destination);
     this.engineBus = ctx.createGain(); this.engineBus.connect(this.master);
     this.fxBus = ctx.createGain(); this.fxBus.connect(this.master);
+    // a short synthetic room / grandstand reverb (stereo decaying noise whose highs die first); skipped on the Low profile (a convolver costs CPU)
+    this.reverb = null;
+    if (this.settings.data.graphics !== 'low' && this.settings.data.audio.reverb !== false && ctx.createConvolver) {
+      try {
+        this.reverb = ctx.createConvolver(); this.reverb.buffer = this.reverbIR(0.85);
+        this.revSend = ctx.createGain(); this.revSend.gain.value = 0.14;
+        this.engineBus.connect(this.revSend); this.fxBus.connect(this.revSend); this.revSend.connect(this.reverb); this.reverb.connect(this.master);
+      } catch (e) { this.reverb = null; }
+    }
     this.noiseBuf = this.noiseBuffer(3);
     // ---- player engine (synthesised fallback): two cylinder banks (PeriodicWave pulse trains, slightly detuned -> beating),
     // a rev-frequency sub-harmonic, fixed exhaust resonances (the 'scream'), combustion noise, MGU-K whine, turbo whistle
@@ -95,6 +141,7 @@ export class AudioEngine {
     // ---- continuous layers
     this.wind = this.loopNoise('lowpass', 400); this.wind.g.connect(this.fxBus);
     this.squeal = this.loopNoise('bandpass', 1700, 6); this.squeal.g.connect(this.fxBus);
+    this.squeal2 = this.loopNoise('bandpass', 3100, 9); this.squeal2.g.connect(this.fxBus);   // a second, higher scrub tone: the squeal is not a pure band
     this.gravel = this.loopNoise('lowpass', 900, 0.7); this.gravel.g.connect(this.fxBus);
     this.brakeHiss = this.loopNoise('highpass', 3500); this.brakeHiss.g.connect(this.fxBus);
     this.rainN = this.loopNoise('bandpass', 4200, 0.5); this.rainN.g.connect(this.fxBus);
@@ -150,15 +197,16 @@ export class AudioEngine {
       case 'penalty': if (e.driver && e.driver.isPlayer) { this.tone(180, 0.35, 'sawtooth', 0.18); } break;
       case 'message': this.tone(1800, 0.05, 'square', 0.04); break;
       case 'sc': this.tone(520, 0.4, 'triangle', 0.15); break;
-      case 'pitService': if (e.driver && e.driver.isPlayer) { for (let i = 0; i < 4; i++) setTimeout(() => this.burst(0.08, 5000, 0.35, 'highpass'), i * 180); } break;
+      case 'pitService': if (e.driver && e.driver.isPlayer) { for (let w = 0; w < 4; w++) for (let k = 0; k < 7; k++) setTimeout(() => { this.burst(0.03, 2600, 0.22, 'bandpass'); }, w * 420 + k * 34); for (let w = 0; w < 4; w++) setTimeout(() => this.tone(700, 0.28, 'sawtooth', 0.05, 1.8), w * 420); } break;
       case 'chequered': this.tone(1200, 0.5, 'sine', 0.2); break;
       default: break;
     }
   }
-  gearClick() { this.burst(0.05, 1800, 0.25, 'bandpass'); }
+  /** seamless-shift gearbox: a dull thump up (the dog engages under load), a sharper click down */
+  gearClick(up = true) { if (up) { this.tone(95, 0.07, 'sine', 0.16, 0.6); this.burst(0.04, 1500, 0.14, 'bandpass'); } else { this.burst(0.05, 2200, 0.24, 'bandpass'); this.tone(130, 0.05, 'triangle', 0.08, 0.7); } }
 
   /** per frame. cam = THREE.Camera (for pan/doppler) */
-  update(dt, rm, cam, focusCar) {
+  update(dt, rm, cam, focusCar, camMode = 'chase') {
     if (!this.ready || this.paused || !focusCar) return;
     this.t += dt;
     if (this.ctx.state !== 'running' && (this.resumeT = (this.resumeT || 0) - dt) <= 0) { this.resumeT = 1; try { this.ctx.resume(); } catch (e) { /* needs a user gesture; the next one retries */ } }   // 'suspended' / iOS 'interrupted' after a call or app switch
@@ -166,15 +214,21 @@ export class AudioEngine {
     const S = (p, v, tc = 0.03) => p.setTargetAtTime(v, now, tc);
     const rpm = car.pt.rpm, thr = car.pt.throttleApplied, sp = car.speed;
     const running = rm.phase !== 'init' && !car.retired && car.pt.fuel > 0;
-    if (this.bank) {
-      // ---- recorded engine (player). 0.12 loop rms * 1.7 ~ comfortably under the master limiter
-      const eng = this.engineFor(car);
+    const eng = this.voicesReady() ? this.engineFor(car) : null;
+    if (eng) {
+      // ---- player engine through EngineVoice (recording or synthesised layers). 0.12 loop rms * 1.7 ~ comfortably under the master limiter
+      const cockpit = camMode === 'cockpit';
       if (!this.pVoice || this.pEngId !== eng.id) {
         if (this.pVoice) this.pVoice.dispose();
         this.pVoice = new EngineVoice(ctx, this.engineBus, eng, { limiterLfo: true }); this.pEngId = eng.id;
       }
-      this.pVoice.set(rpm, running ? thr : 0, running ? 1.7 : 0, now, { limiter: !!car.pt.limiter, shifting: car.pt.shiftTimer > 0 });
-      S(this.eGain.gain, 0, 0.03); S(this.turbo.g.gain, 0, 0.1); S(this.whine.g.gain, 0, 0.1); S(this.eNoise.g.gain, 0, 0.05);
+      this.pVoice.set(rpm, running ? thr : 0, running ? (cockpit ? 1.5 : 1.7) : 0, now, { limiter: !!car.pt.limiter, shifting: car.pt.shiftTimer > 0, bright: CAM_BRIGHT[camMode] ?? 1 });
+      S(this.eGain.gain, 0, 0.03);
+      // the parts a layer loop does not contain: the intake / combustion roar, the MGU-K whine and (V6 hybrid) the turbo whistle
+      const rr = clamp(rpm / 15000, 0, 1.05), load = thr, hybrid = eng.id === 'syn-v6' || !eng.synth;
+      S(this.eNoise.f.frequency, Math.max(300, rpm / 60 * eng.cyl / 2 * 2), 0.05); S(this.eNoise.g.gain, running && eng.synth ? (0.01 + 0.05 * load * load) * (0.3 + 0.7 * rr) * (cockpit ? 1.4 : 1) : 0, 0.05);
+      S(this.whine.o.frequency, 1400 + rpm * 0.22, 0.05); S(this.whine.g.gain, running && eng.synth && hybrid ? (0.003 + 0.010 * thr * rr) * (cockpit ? 2 : 1) : 0, 0.1);
+      S(this.turbo.o.frequency, 2600 + thr * 5500 * clamp(rpm / 13000, 0, 1), 0.08); S(this.turbo.g.gain, running && eng.synth && eng.id === 'syn-v6' ? (0.004 + 0.012 * thr) * (cockpit ? 1.6 : 1) : 0, 0.1);
     } else {
       const f = Math.max(30, rpm / 60 * 3);                         // V6 firing frequency
       S(this.eo[0].o.frequency, f, 0.02); S(this.eo[1].o.frequency, f * 1.006, 0.02);   // two banks, 0.6 % apart -> slow beating
@@ -194,14 +248,16 @@ export class AudioEngine {
       S(this.turbo.o.frequency, 2600 + thr * 5500 * clamp(rpm / 13000, 0, 1), 0.08); S(this.turbo.g.gain, running ? 0.006 + 0.016 * thr : 0, 0.1);
     }
     // lift-off crackle + shifts
-    if (this.lastThr > 0.8 && thr < 0.15 && rpm > 9000 && !this.bank) { for (let i = 0; i < 3; i++) setTimeout(() => this.burst(0.05 + Math.random() * 0.05, 2400, 0.22), i * 60 + Math.random() * 40); }
-    if (car.pt.gear !== this.lastGear) { this.gearClick(); this.lastGear = car.pt.gear; }
+    if (this.lastThr > 0.8 && thr < 0.15 && rpm > 9000 && !eng) { for (let i = 0; i < 3; i++) setTimeout(() => this.burst(0.05 + Math.random() * 0.05, 2400, 0.22), i * 60 + Math.random() * 40); }
+    if (car.pt.gear !== this.lastGear) { this.gearClick(car.pt.gear > this.lastGear); this.lastGear = car.pt.gear; }
+    const drs = car.aero.drsOpen > 0.5 ? 1 : 0;                       // the flap: a clack when it opens and a softer one when it shuts
+    if (drs !== this.lastDrs) { this.lastDrs = drs; this.tone(drs ? 190 : 150, 0.09, 'square', drs ? 0.10 : 0.07, 0.5); this.burst(0.05, drs ? 3200 : 2400, drs ? 0.22 : 0.14, 'bandpass'); }
     this.lastThr = thr;
     // wind, tyres, brakes, kerb, rain
     S(this.wind.g.gain, clamp(sp / 95, 0, 1) ** 2 * 0.5, 0.1); S(this.wind.f.frequency, 250 + sp * 9, 0.1);
     let skid = 0, gravelAmt = 0;
     for (let i = 0; i < 4; i++) { skid = Math.max(skid, car.skid[i] * (car.surf[i] <= 2 ? 1 : 0)); if (car.surf[i] === 3 || car.surf[i] === 4 || car.surf[i] === 6) gravelAmt = Math.max(gravelAmt, 1); }
-    S(this.squeal.g.gain, clamp(skid, 0, 1.2) * 0.35 * (sp > 3 ? 1 : 0), 0.04); S(this.squeal.f.frequency, 1300 + sp * 8 + skid * 500, 0.05);
+    S(this.squeal.g.gain, clamp(skid, 0, 1.2) * 0.35 * (sp > 3 ? 1 : 0), 0.04); S(this.squeal.f.frequency, 1300 + sp * 8 + skid * 500, 0.05); S(this.squeal2.g.gain, clamp(skid, 0, 1.2) * 0.16 * (sp > 3 ? 1 : 0), 0.05); S(this.squeal2.f.frequency, 2500 + sp * 14 + skid * 900, 0.05);
     S(this.gravel.g.gain, gravelAmt * clamp(sp / 40, 0, 1) * 0.5, 0.08);
     S(this.brakeHiss.g.gain, clamp(car.brakes.pedal, 0, 1) * clamp(sp / 80, 0, 1) * 0.12, 0.05);
     S(this.kerb.g.gain, clamp(car.kerbShake * 60, 0, 1) * clamp(sp / 50, 0, 1) * 0.4, 0.03); S(this.kerb.o.frequency, 18 + sp * 0.35, 0.05);
@@ -210,7 +266,7 @@ export class AudioEngine {
     this.updateVoices(rm, cam, car, now);
   }
   updateVoices(rm, cam, focus, now) {
-    if (this.bank) return this.updateBankVoices(rm, cam, focus, now);
+    if (this.voicesReady()) return this.updateBankVoices(rm, cam, focus, now);
     const cp = cam.position;
     // right vector of the camera in the xz plane
     const e = cam.matrixWorld.elements; // column 0 = right, column 2 = back

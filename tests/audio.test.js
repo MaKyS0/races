@@ -37,3 +37,35 @@ describe('engine bank build tool – firing-frequency tracker', () => {
     expect(worst).toBeLessThan(0.03);
   });
 });
+
+import { synthLayer, SYNTH_SPECS, SYNTH_LAYER_RPM } from '../src/audio/EngineSynth.js';
+const goertzel = (x, sr, f) => { const w = 2 * Math.PI * f / sr; let c = 0, s = 0; for (let i = 0; i < x.length; i++) { c += x[i] * Math.cos(w * i); s += x[i] * Math.sin(w * i); } return Math.hypot(c, s) / x.length; };
+
+describe('synthesised engine layers', () => {
+  for (const spec of SYNTH_SPECS) {
+    it(`${spec.id}: the firing frequency dominates at every layer rpm and the loop is seamless`, () => {
+      for (const rpm of [SYNTH_LAYER_RPM[0], SYNTH_LAYER_RPM[3], SYNTH_LAYER_RPM[5]]) {
+        const l = synthLayer(spec, rpm, true, 1), fire = rpm / 60 * spec.cyl / 2;
+        // energy in the first few firing orders vs between them
+        let on = 0, off = 0;
+        for (let j = 1; j <= 3; j++) on += goertzel(l.data, l.sampleRate, fire * j);
+        for (const k of [0.62, 1.37, 2.41]) off += goertzel(l.data, l.sampleRate, fire * k);
+        expect(on).toBeGreaterThan(off * 2.5);
+        // seamless: the step across the loop point is no bigger than the largest step inside the loop
+        let maxStep = 0; for (let i = 1; i < l.data.length; i++) maxStep = Math.max(maxStep, Math.abs(l.data[i] - l.data[i - 1]));
+        expect(Math.abs(l.data[0] - l.data[l.data.length - 1])).toBeLessThanOrEqual(maxStep * 1.05);
+        // level / finite
+        let ss = 0, peak = 0; for (const v of l.data) { expect(Number.isFinite(v)).toBe(true); ss += v * v; peak = Math.max(peak, Math.abs(v)); }
+        expect(Math.sqrt(ss / l.data.length)).toBeGreaterThan(0.05); expect(peak).toBeLessThanOrEqual(0.95);
+        expect(Math.abs(l.rpm - rpm)).toBeLessThan(1);
+      }
+    });
+  }
+  it('is deterministic, and the over-run layer is darker than the throttle-open layer', () => {
+    const spec = SYNTH_SPECS[1];
+    const a = synthLayer(spec, 9300, true, 3), b = synthLayer(spec, 9300, true, 3);
+    expect(Array.from(a.data.slice(0, 50))).toEqual(Array.from(b.data.slice(0, 50)));
+    const hi = (l) => { let e = 0, t = 0; for (let f = 200; f < 6000; f += 97) { const g = goertzel(l.data, l.sampleRate, f) ** 2; t += g; if (f > 2500) e += g; } return e / t; };
+    expect(hi(synthLayer(spec, 9300, false, 3))).toBeLessThan(hi(a));
+  });
+});
