@@ -5,11 +5,18 @@ import { smokeTexture, skidTexture, sparkTexture } from './Textures.js';
 import { makeRng } from '../core/math.js';
 
 const VERT = `
-attribute float aSize; attribute vec4 aColor; varying vec4 vColor; uniform float uScale; uniform vec2 uNear;
-void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0); vColor = aColor; vColor.a *= smoothstep(uNear.x, uNear.y, -mv.z); gl_Position = projectionMatrix * mv; gl_PointSize = clamp(aSize * uScale / max(0.1,-mv.z), 0.0, 220.0); }`;
+attribute float aSize; attribute vec4 aColor; attribute float aRot; varying vec4 vColor; varying float vRot; uniform float uScale; uniform vec2 uNear;
+void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0); vColor = aColor; vRot = aRot; vColor.a *= smoothstep(uNear.x, uNear.y, -mv.z); gl_Position = projectionMatrix * mv; gl_PointSize = clamp(aSize * uScale / max(0.1,-mv.z), 0.0, 220.0); }`;
+// each puff is turned by its own fixed angle (no two neighbours show the same blob), and smoke / dust / spray are lit: brighter on
+// top where the sky light falls, a self-shadowed underside and denser core, scaled by the scene light (time of day, cloud, rain)
 const FRAG = `
-uniform sampler2D map; varying vec4 vColor;
-void main(){ vec4 t = texture2D(map, gl_PointCoord); gl_FragColor = vec4(vColor.rgb, vColor.a * t.a); if (gl_FragColor.a < 0.01) discard; }`;
+uniform sampler2D map; uniform float uShade; uniform vec3 uLight; varying vec4 vColor; varying float vRot;
+void main(){
+  vec2 pc = gl_PointCoord - 0.5; float cs = cos(vRot), sn = sin(vRot);
+  vec4 t = texture2D(map, vec2(cs * pc.x - sn * pc.y, sn * pc.x + cs * pc.y) + 0.5);
+  vec3 c = vColor.rgb;
+  if (uShade > 0.5) c *= uLight * mix(0.74, 1.12, 1.0 - gl_PointCoord.y) * mix(1.04, 0.86, t.a);
+  gl_FragColor = vec4(c, vColor.a * t.a); if (gl_FragColor.a < 0.01) discard; }`;
 
 class Pool {
   constructor(n, tex, { additive = false, gravity = 0, drag = 0 } = {}) {
@@ -22,10 +29,12 @@ class Pool {
     g.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
     g.setAttribute('aSize', new THREE.BufferAttribute(this.size, 1).setUsage(THREE.DynamicDrawUsage));
     g.setAttribute('aColor', new THREE.BufferAttribute(this.rgba, 4).setUsage(THREE.DynamicDrawUsage));
+    const rot = new Float32Array(n); for (let i = 0; i < n; i++) rot[i] = (i * 2.39996) % 6.28319;   // golden angle: neighbours differ
+    g.setAttribute('aRot', new THREE.BufferAttribute(rot, 1));
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
-    const m = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, uniforms: { map: { value: tex }, uScale: { value: 600 }, uNear: { value: new THREE.Vector2(1.2, 6.0) } }, transparent: true, depthWrite: false, blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending });
+    const m = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: FRAG, uniforms: { map: { value: tex }, uScale: { value: 600 }, uNear: { value: new THREE.Vector2(1.2, 6.0) }, uShade: { value: additive ? 0 : 1 }, uLight: { value: new THREE.Color(1, 1, 1) } }, transparent: true, depthWrite: false, blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending });
     this.points = new THREE.Points(g, m); this.points.frustumCulled = false; this.points.renderOrder = 5;
-    this.geo = g; this.alive = 0; this.scaleAlpha = 1;
+    this.geo = g; this.alive = 0; this.scaleAlpha = 1; this.fresh = false; this.points.visible = false;
   }
   emit(x, y, z, vx, vy, vz, s0, s1, life, r, g, b) {
     const i = this.i; this.i = (this.i + 1) % this.n;
@@ -33,8 +42,12 @@ class Pool {
     this.pos[p] = x; this.pos[p + 1] = y; this.pos[p + 2] = z; this.vel[p] = vx; this.vel[p + 1] = vy; this.vel[p + 2] = vz;
     this.life[i] = life; this.max[i] = life; this.s0[i] = s0; this.s1[i] = s1;
     this.col[p] = r; this.col[p + 1] = g; this.col[p + 2] = b;
+    this.fresh = true;
   }
   update(dt) {
+    // nothing alive and nothing new: skip the loop, the buffer uploads and the draw call (most of a race has no smoke at all)
+    if (!this.alive && !this.fresh) { this.points.visible = false; return; }
+    this.fresh = false;
     const n = this.n, drag = Math.exp(-this.drag * dt);
     let alive = 0;
     for (let i = 0; i < n; i++) {
@@ -50,7 +63,7 @@ class Pool {
       this.rgba[q] = this.col[p]; this.rgba[q + 1] = this.col[p + 1]; this.rgba[q + 2] = this.col[p + 2];
       this.rgba[q + 3] = (t < 0.15 ? t / 0.15 : 1 - (t - 0.15) / 0.85) * this.scaleAlpha;
     }
-    this.alive = alive;
+    this.alive = alive; this.points.visible = true;
     this.geo.attributes.position.needsUpdate = true; this.geo.attributes.aSize.needsUpdate = true; this.geo.attributes.aColor.needsUpdate = true;
   }
 }
@@ -65,7 +78,7 @@ export class Effects {
   setQuality(q) {
     this.q = q;
     const k = q.particles;
-    if (this.smoke) { this.group.remove(this.smoke.points, this.dust.points, this.spark.points, this.spray.points); }
+    if (this.smoke) for (const p of [this.smoke, this.dust, this.spark, this.spray]) { this.group.remove(p.points); p.geo.dispose(); p.points.material.dispose(); }
     const tex = this.puffTex || (this.puffTex = smokeTexture()), stex = this.sparkTex || (this.sparkTex = sparkTexture());
     this.smoke = new Pool(Math.max(40, Math.round(500 * k)), tex, { gravity: 0.6, drag: 1.2 });
     this.dust = new Pool(Math.max(30, Math.round(300 * k)), tex, { gravity: -0.3, drag: 1.6 });
@@ -75,6 +88,7 @@ export class Effects {
     this.spray.points.material.uniforms.uNear.value.set(3.5, 16);   // spray is a mist further away, never a white blob on the lens
     this.smoke.points.material.uniforms.uNear.value.set(2.0, 9.0);
     this.group.add(this.smoke.points, this.dust.points, this.spark.points, this.spray.points);
+    if (this.light) this.setLight(this.light);
     // skid marks
     if (this.skidMesh) { this.group.remove(this.skidMesh); this.skidMesh.dispose(); }
     const n = q.skid;
@@ -100,6 +114,8 @@ export class Effects {
     }
   }
 
+  /** scene light for the lit particles (smoke, dust, spray): rgb multiplier */
+  setLight(c) { this.light = c; for (const p of [this.smoke, this.dust, this.spray]) if (p) p.points.material.uniforms.uLight.value.copy(c); }
   setScale(px) { for (const p of [this.smoke, this.dust, this.spark, this.spray]) p.points.material.uniforms.uScale.value = px; }
 
   addSkid(slot, x, y, z, vx, vz, intensity) {

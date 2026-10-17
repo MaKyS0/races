@@ -35,7 +35,7 @@ export class Horizon {
       g.computeBoundingSphere();
       const m = new THREE.MeshBasicMaterial({ vertexColors: true, fog: false, side: THREE.DoubleSide, depthWrite: true });
       m.userData.mix = R.mix;
-      const mesh = new THREE.Mesh(g, m); mesh.renderOrder = -5 + ri; mesh.frustumCulled = false;
+      const mesh = new THREE.Mesh(g, m); mesh.renderOrder = 10 + ri; mesh.frustumCulled = false;   // after the track (which hides most of them), before the sky
       this.mats.push(m); this.group.add(mesh);
     });
   }

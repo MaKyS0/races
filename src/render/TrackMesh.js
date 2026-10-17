@@ -145,7 +145,7 @@ export class TrackMesh {
     const g = new THREE.PlaneGeometry(40000, 40000); g.rotateX(-Math.PI / 2);
     const m = new THREE.Mesh(g, this.mats.far);
     m.position.set((t.bounds.minX + t.bounds.maxX) / 2, this.groundY - 0.3, (t.bounds.minZ + t.bounds.maxZ) / 2);
-    this.far = m; m.receiveShadow = false;
+    this.far = m; m.receiveShadow = false; m.renderOrder = 8;   // last of the ground: the chunks in front of it fill the depth first
     this.group.add(m);
   }
 

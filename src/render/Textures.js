@@ -199,12 +199,14 @@ export function blobTexture() {
 export function smokeTexture() {
   const S = 128, c = canvas(S, S), g = c.getContext('2d');
   const rnd = makeRng(4);
-  for (let i = 0; i < 9; i++) {
-    const a = rnd() * 6.28, r = rnd() * S * 0.16, x = S / 2 + Math.cos(a) * r, y = S / 2 + Math.sin(a) * r, rad = S * (0.2 + rnd() * 0.16);
+  // a few big soft lobes for the body, then many small ones around the rim: a billowing outline instead of a disc
+  const blob = (x, y, rad, a) => {
     const gr = g.createRadialGradient(x, y, 0, x, y, rad);
-    gr.addColorStop(0, 'rgba(255,255,255,0.32)'); gr.addColorStop(0.5, 'rgba(255,255,255,0.14)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    gr.addColorStop(0, `rgba(255,255,255,${a})`); gr.addColorStop(0.55, `rgba(255,255,255,${a * 0.45})`); gr.addColorStop(1, 'rgba(255,255,255,0)');
     g.fillStyle = gr; g.fillRect(0, 0, S, S);
-  }
+  };
+  for (let i = 0; i < 7; i++) { const a = rnd() * 6.28, r = rnd() * S * 0.12; blob(S / 2 + Math.cos(a) * r, S / 2 + Math.sin(a) * r, S * (0.2 + rnd() * 0.12), 0.3); }
+  for (let i = 0; i < 26; i++) { const a = rnd() * 6.28, r = S * (0.16 + rnd() * 0.16); blob(S / 2 + Math.cos(a) * r, S / 2 + Math.sin(a) * r, S * (0.05 + rnd() * 0.07), 0.22); }
   const fall = g.createRadialGradient(S / 2, S / 2, S * 0.3, S / 2, S / 2, S / 2);   // never a hard edge
   fall.addColorStop(0, 'rgba(0,0,0,0)'); fall.addColorStop(1, 'rgba(0,0,0,1)');
   g.globalCompositeOperation = 'destination-out'; g.fillStyle = fall; g.fillRect(0, 0, S, S);

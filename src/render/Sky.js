@@ -52,7 +52,9 @@ export class Sky {
         }`,
     });
     this.mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 20), mat);
-    this.mesh.scale.setScalar(9000); this.mesh.frustumCulled = false; this.mesh.renderOrder = -10;
+    // drawn after every opaque object (it sits exactly on the far plane, z = w): the depth test then skips its gradient + cloud
+    // noise wherever the track, the hills or the cars cover the sky, instead of shading the whole screen and overdrawing it
+    this.mesh.scale.setScalar(9000); this.mesh.frustumCulled = false; this.mesh.renderOrder = 20;
     this.fogColor = new THREE.Color(0xc7dcf2);
   }
   /** clear-sky palette for the circuit's time of day (Atmosphere preset) */

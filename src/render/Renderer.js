@@ -23,7 +23,9 @@ export class Renderer3D {
   constructor(canvas, settings, perf) {
     this.canvas = canvas; this.settings = settings; this.perf = perf;
     this.qname = perf.qualityName(); this.q = QUALITY[this.qname];
-    const gl = this.renderer = new THREE.WebGLRenderer({ canvas, antialias: this.q.antialias, powerPreference: 'high-performance', alpha: false, stencil: false, preserveDrawingBuffer: !!settings.data.preserveBuffer });
+    // MSAA on the canvas only when the post pipeline will not draw the frame: its HDR target is multisampled already (see PostFX 'clean')
+    this.canvasAA = this.q.antialias && settings.data.fx === false;
+    const gl = this.renderer = new THREE.WebGLRenderer({ canvas, antialias: this.canvasAA, powerPreference: 'high-performance', alpha: false, stencil: false, preserveDrawingBuffer: !!settings.data.preserveBuffer });
     gl.outputColorSpace = THREE.SRGBColorSpace;
     gl.toneMapping = THREE.ACESFilmicToneMapping; gl.toneMappingExposure = 1.12;
     this.scene = new THREE.Scene();
@@ -107,7 +109,8 @@ export class Renderer3D {
     this.renderer.setPixelRatio(pr);
     this.resize();
     this.post.setSize(this.width, this.height, pr);
-    this.post.setLevel(this.settings.data.fx === false ? 0 : this.qname === 'high' ? 2 : this.qname === 'medium' ? 1 : 0);
+    const look = this.qname === 'high' ? 2 : this.qname === 'medium' ? 1 : 0;
+    this.post.setLevel(this.settings.data.fx === false || look === 0 ? (this.q.antialias && !this.canvasAA ? 0.5 : 0) : look);
     if (this.effects) this.effects.setScale(0.55 * (this.canvas.height || 720));
   }
   resize() {
@@ -247,6 +250,9 @@ export class Renderer3D {
     if (this.q.env && Math.abs(cloud - this.lastCloud) > 0.3) { this.lastCloud = cloud; this.setupEnv(); }
     this.scene.environmentIntensity = 0.35 + 0.5 * wet;
     this.renderer.toneMappingExposure = A.exposure * (1.0 - 0.1 * cloud);
+    // smoke / spray take the light of the moment: a touch of the sun's colour in the clear, duller and greyer under cloud and rain
+    this.fxLight = (this.fxLight || new THREE.Color()).setRGB(1, 1, 1).lerp(this.sun.color, 0.25 * (1 - cloud)).multiplyScalar(0.92 - 0.3 * cloud - 0.12 * w.rain + flash * 0.6);
+    this.effects.setLight(this.fxLight);
   }
 
   // ---------------------------------------------------------------- per-frame sync
