@@ -14,6 +14,8 @@ import { WX, WY } from '../physics/VehiclePhysics.js';
 import { TEAMS } from '../race/Roster.js';
 import { SURF } from '../track/TrackSystem.js';
 import { PostFX } from './PostFX.js';
+import { DrivingLine } from './DrivingLine.js';
+import { Horizon } from './Horizon.js';
 
 const _v = new THREE.Vector3();
 
@@ -150,6 +152,8 @@ export class Renderer3D {
     this.trackMesh = new TrackMesh(track, mats, { rowsPerChunk: q.drawDistance < 900 ? 150 : 110 });
     this.trackMesh.buildLine(profile);
     this.raceGroup.add(this.trackMesh.group);
+    this.dline = new DrivingLine(track, profile); this.raceGroup.add(this.dline.mesh);
+    this.horizon = new Horizon(track); this.raceGroup.add(this.horizon.group);
     this.decor = new Decor(track, q, mats);
     this.raceGroup.add(this.decor.group);
     const th = track.def.theme || {};
@@ -160,6 +164,7 @@ export class Renderer3D {
     if (this.q.env) { this.lastCloud = -1; this.setupEnv(); }
     this.sky.setWeather(0.1, 0);
     this.scene.fog.color.copy(this.sky.fogColor);
+    if (this.horizon) this.horizon.setColors(this.sky.uniforms.horizon.value);
     this.scene.fog.far = q.drawDistance * 1.05; this.scene.fog.near = q.drawDistance * 0.3;
     this.hemi.groundColor.set(th.grass ?? 0x59693f).lerp(new THREE.Color(0x6a6a66), 0.6);   // bounce light: mostly neutral so undersides do not turn green
     this.lastWet = -1;
@@ -195,6 +200,8 @@ export class Renderer3D {
     // track + decor own their materials and canvas textures (nothing is shared with the cars): free them with the geometry
     const freeMat = (m) => { if (!m) return; for (const mm of Array.isArray(m) ? m : [m]) { if (mm.map) mm.map.dispose(); mm.dispose(); } };
     if (this.trackMesh) { this.raceGroup.remove(this.trackMesh.group); this.trackMesh.group.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) freeMat(o.material); if (o.dispose && o.isInstancedMesh) o.dispose(); }); this.trackMesh = null; }
+    if (this.dline) { this.raceGroup.remove(this.dline.mesh); this.dline.dispose(); this.dline = null; }
+    if (this.horizon) { this.raceGroup.remove(this.horizon.group); this.horizon.dispose(); this.horizon = null; }
     if (this.decor) { this.raceGroup.remove(this.decor.group); this.decor.group.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) freeMat(o.material); }); this.decor = null; }
     if (this.mats) { for (const k of ['ground', 'kerb', 'wall', 'wall2', 'far', 'fence']) freeMat(this.mats[k]); this.mats = null; }
     if (this.blobs) { this.raceGroup.remove(this.blobs); this.blobs.geometry.dispose(); this.blobs.material.map.dispose(); this.blobs.material.dispose(); this.blobs.dispose(); this.blobs = null; }
@@ -293,7 +300,9 @@ export class Renderer3D {
     this.effects.updateDebris(dt);
     const f = this.focus;
     this.rain.update(this.time, this.camera.position, rm.weather.rain, f ? _v.set(f.vx, 0, f.vz) : null, Math.min(1, q.particles + 0.2));
-    if (this.trackMesh.line) this.trackMesh.line.visible = !!this.settings.data.assists.racingLine;
+    // optimal line: live chevrons (DrivingLine) for the car the camera follows; the old static strip stays hidden
+    if (this.trackMesh.line) this.trackMesh.line.visible = false;
+    if (this.dline) { const As = this.settings.data.assists; this.dline.update(this.focus, As.drivingLine ?? (As.racingLine ? 'full' : 'off'), dt); }
     if (this.decor) this.decor.setLights(rm.phase === 'lights' ? rm.lights : 0);
   }
 

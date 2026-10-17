@@ -218,7 +218,7 @@ export class Menu {
       this.select('Steering help', [[0, 'Off (raw)'], [1, 'Speed-sensitive + stability'], [2, 'Strong']], () => A.steer, (v) => { A.steer = +v; }),
       this.toggle('Automatic gearbox', () => A.autoGear, (v) => { A.autoGear = v; }),
       this.toggle('Automatic pit limiter', () => A.pitLimiter, (v) => { A.pitLimiter = v; }),
-      this.toggle('Racing line / braking guide', () => A.racingLine, (v) => { A.racingLine = v; }),
+      this.select('Optimal line', [['full', 'Full line (blue go, yellow lift, red brake)'], ['braking', 'Braking zones only'], ['off', 'Off']], () => A.drivingLine ?? (A.racingLine ? 'full' : 'off'), (v) => { A.drivingLine = v; }),
     );
     body.append(el('div', 'sub', 'Aids reduce workload but never remove the physics: you can still lock a wheel, spin, aquaplane or crash.'));
   }

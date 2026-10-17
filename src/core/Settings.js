@@ -27,7 +27,7 @@ export const DEFAULTS = {
     keyboardSteerRate: 2.6, steerAssistKeyboard: true, touchMode: 'buttons', tilt: false, haptics: true,
   },
   keys: DEFAULT_KEYS,
-  assists: { abs: 0, tc: 1, steer: 1, autoGear: true, pitLimiter: true, racingLine: false },
+  assists: { abs: 0, tc: 1, steer: 1, autoGear: true, pitLimiter: true, racingLine: false, drivingLine: 'full' },
   game: {
     mode: 'race', trackId: 'monza', team: 0, laps: 3, aiCount: 15, difficulty: 'pro', weather: 'dry', compound: 'medium',
     wear: 2, formationLap: false, safetyCar: 'auto', qualiMinutes: 6, practiceMinutes: 10, camera: 'chase', damage: true, penalties: true,
