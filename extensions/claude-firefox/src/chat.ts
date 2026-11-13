@@ -78,6 +78,9 @@ function onMessage(m: { type: string; [k: string]: unknown }) {
   } else if (m.type === 'saved') {
     hasKey = !!m.hasKey; $('keyState').textContent = hasKey ? 'Ключ сохранён' : 'Ключ не задан';
   } else if (m.type === 'event') onEvent(m.event as AgentEvent);
+  else if (m.type === 'meta') onMeta(m as unknown as Meta);
+  else if (m.type === 'settings') fillSettings(m.settings as Settings);
+  else if (m.type === 'notice') add('notice' + (m.error ? ' error' : ''), esc(m.text as string));
 }
 function onEvent(e: AgentEvent) {
   if (e.type === 'text') {
@@ -107,24 +110,86 @@ function submit() {
   input.value = ''; grow();
 }
 stopBtn.onclick = () => port.postMessage({ type: 'stop' });
-$('new').onclick = () => { if (confirm('Начать новый разговор? Текущий будет удалён.')) port.postMessage({ type: 'reset' }); };
+$('new').onclick = () => port.postMessage({ type: 'reset' });   // the current conversation stays in the history (☰)
 
 // ---------------------------------------------------------------- settings
-type Settings = { apiKey: string; model: string; effort: string; confirmActions: boolean };
+type Settings = { apiKey: string; model: string; effort: string; confirmActions: boolean; googleClientId: string; googleClientSecret: string; syncApiKey: boolean };
 function fillSettings(s: Settings) {
   $<HTMLInputElement>('apiKey').value = '';
   $('keyState').textContent = s.apiKey ? `Сохранён ключ ${s.apiKey}. Оставьте поле пустым, чтобы не менять.` : 'Ключ не задан. Его можно создать на console.anthropic.com.';
   $<HTMLSelectElement>('model').value = s.model;
   $<HTMLSelectElement>('effort').value = s.effort;
   $<HTMLInputElement>('confirmActions').checked = s.confirmActions;
+  $<HTMLInputElement>('syncApiKey').checked = s.syncApiKey;
+  $<HTMLInputElement>('gClientId').value = s.googleClientId;
+  $<HTMLInputElement>('gClientSecret').value = '';
+  $<HTMLInputElement>('gClientSecret').placeholder = s.googleClientSecret ? 'сохранён (оставьте пустым)' : 'GOCSPX-…';
+  ($('gHelp') as HTMLDetailsElement).open = !s.googleClientId;
 }
 $('gear').onclick = () => dlg.showModal();
 $('cancel').onclick = () => dlg.close();
-$('settingsForm').addEventListener('submit', () => {
-  port.postMessage({ type: 'settings', settings: {
-    apiKey: $<HTMLInputElement>('apiKey').value.trim(),
-    model: $<HTMLSelectElement>('model').value,
-    effort: $<HTMLSelectElement>('effort').value,
-    confirmActions: $<HTMLInputElement>('confirmActions').checked,
-  } });
+const formSettings = () => ({
+  apiKey: $<HTMLInputElement>('apiKey').value.trim(),
+  model: $<HTMLSelectElement>('model').value,
+  effort: $<HTMLSelectElement>('effort').value,
+  confirmActions: $<HTMLInputElement>('confirmActions').checked,
+  syncApiKey: $<HTMLInputElement>('syncApiKey').checked,
+  googleClientId: $<HTMLInputElement>('gClientId').value.trim(),
+  googleClientSecret: $<HTMLInputElement>('gClientSecret').value.trim(),
+});
+$('settingsForm').addEventListener('submit', () => port.postMessage({ type: 'settings', settings: formSettings() }));
+
+// ---------------------------------------------------------------- Google sync, history, memory
+type Meta = { google: { email: string; status: string; at: number; error: string }; notes: { id: string; text: string }[]; conversations: { id: string; title: string; updated: number }[]; currentId: string | null };
+let lastMeta: Meta | null = null;
+const when = (t: number) => new Date(t).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+function onMeta(m: Meta) {
+  lastMeta = m;
+  const g = m.google, st = $('syncState');
+  st.className = 'sync-state' + (g.status === 'error' ? ' error' : '');
+  st.textContent = !g.email ? 'Не подключено'
+    : g.status === 'syncing' ? `${g.email}: синхронизация…`
+    : g.status === 'error' ? `${g.email}: ошибка — ${g.error}`
+    : `${g.email}: синхронизировано${g.at ? ' ' + when(g.at) : ''}`;
+  $('gLogin').hidden = !!g.email; $('gSync').hidden = !g.email; $('gLogout').hidden = !g.email;
+  renderLists();
+}
+function li(main: string, onOpen: (() => void) | null, onDelete: () => void, current = false) {
+  const el = document.createElement('li');
+  if (current) el.className = 'current';
+  const b = document.createElement(onOpen ? 'button' : 'div'); b.className = 'main'; b.innerHTML = main;
+  if (onOpen) b.addEventListener('click', onOpen);
+  const d = document.createElement('button'); d.className = 'del'; d.textContent = '✕'; d.setAttribute('aria-label', 'Удалить');
+  d.addEventListener('click', onDelete);
+  el.append(b, d); return el;
+}
+function renderLists() {
+  if (!lastMeta) return;
+  const cl = $('convList'), nl = $('noteList');
+  cl.replaceChildren(...lastMeta.conversations.map((c) => li(`${esc(c.title || 'Без названия')}<small>${when(c.updated)}</small>`,
+    () => { port.postMessage({ type: 'open_conv', id: c.id }); ($('history') as HTMLDialogElement).close(); },
+    () => { if (confirm('Удалить этот разговор на всех устройствах?')) port.postMessage({ type: 'delete_conv', id: c.id }); }, c.id === lastMeta!.currentId)));
+  if (!lastMeta.conversations.length) cl.innerHTML = '<li class="empty-row">Пока нет разговоров</li>';
+  nl.replaceChildren(...lastMeta.notes.map((n) => li(esc(n.text), null, () => port.postMessage({ type: 'delete_note', id: n.id }))));
+  if (!lastMeta.notes.length) nl.innerHTML = '<li class="empty-row">Память пуста. Скажите Claude «запомни, что…».</li>';
+}
+$('gLogin').onclick = () => {
+  // save the client ID / secret first, then start the sign-in tab
+  port.postMessage({ type: 'settings', settings: formSettings() });
+  port.postMessage({ type: 'google_login' });
+  $('syncState').textContent = 'Открываю вход Google…';
+};
+$('gSync').onclick = () => port.postMessage({ type: 'sync_now' });
+$('gLogout').onclick = () => { if (confirm('Отключить синхронизацию с Google на этом устройстве?')) port.postMessage({ type: 'google_logout' }); };
+for (const id of ['history', 'memory']) {
+  const d = $(id) as HTMLDialogElement;
+  d.querySelector<HTMLButtonElement>('.close')!.onclick = () => d.close();
+}
+$('hist').onclick = () => { renderLists(); ($('history') as HTMLDialogElement).showModal(); };
+$('mem').onclick = () => { renderLists(); ($('memory') as HTMLDialogElement).showModal(); };
+$('noteForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const t = $<HTMLInputElement>('noteText');
+  if (t.value.trim()) port.postMessage({ type: 'add_note', text: t.value.trim() });
+  t.value = '';
 });

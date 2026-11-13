@@ -132,3 +132,18 @@ test('stop() during a turn leaves a valid history: every started tool call is an
   assert.equal(requests.length, 1);
   assert.ok(!agent.busy);
 });
+
+test('combined tool hosts: valid input passes, calls reach the right host', async () => {
+  const { combine, MemoryHost, TOOLS: browserTools } = await import('../src/tools');
+  const saved: string[] = [];
+  const mem = new MemoryHost({ add: async (t) => { saved.push(t); return 'n1'; }, remove: async () => true });
+  const browserLike: ToolHost = { tools: browserTools, validate: () => null, needsConfirmation: async () => null, run: async () => ({ content: 'page' }), summarize: (n) => n };
+  const h = combine(browserLike, mem);
+  assert.equal(h.validate('remember', { text: 'x' }), null);
+  assert.equal(h.validate('get_page', {}), null);
+  assert.match(String(h.validate('remember', {})), /missing "text"/);
+  assert.match(String(h.validate('nope', {})), /unknown tool/);
+  assert.match((await h.run('remember', { text: 'Город: Казань' })).content, /Saved as \[n1\]/);
+  assert.deepEqual(saved, ['Город: Казань']);
+  assert.equal((await h.run('get_page', {})).content, 'page');
+});

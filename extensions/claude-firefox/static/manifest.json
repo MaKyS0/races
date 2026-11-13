@@ -2,8 +2,8 @@
   "manifest_version": 2,
   "name": "Claude Browser Agent (unofficial)",
   "short_name": "Claude Agent",
-  "version": "0.1.0",
-  "description": "Chat with Claude through your Anthropic API key and let it read and operate the open page. Unofficial, not made by Anthropic.",
+  "version": "0.2.0",
+  "description": "Chat with Claude through your Anthropic API key and let it read and operate the open page. Syncs chats and Claude's memory through your Google Drive. Unofficial, not made by Anthropic.",
   "icons": {
     "48": "icon.svg",
     "96": "icon.svg"
@@ -11,6 +11,8 @@
   "permissions": [
     "tabs",
     "storage",
+    "webRequest",
+    "webRequestBlocking",
     "<all_urls>"
   ],
   "background": {
@@ -30,7 +32,8 @@
       "data_collection_permissions": {
         "required": [
           "websiteContent",
-          "websiteActivity"
+          "websiteActivity",
+          "personalCommunications"
         ]
       }
     },

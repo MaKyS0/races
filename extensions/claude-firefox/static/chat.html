@@ -10,6 +10,8 @@
   <header>
     <div class="brand"><img src="icon.svg" alt=""><span>Claude</span></div>
     <div class="target" id="target" title="Вкладка, с которой работает Claude">нет открытой страницы</div>
+    <button id="hist" class="icon" title="История разговоров" aria-label="История разговоров">☰</button>
+    <button id="mem" class="icon" title="Память Claude" aria-label="Память Claude">✦</button>
     <button id="new" class="icon" title="Новый разговор" aria-label="Новый разговор">＋</button>
     <button id="gear" class="icon" title="Настройки" aria-label="Настройки">⚙</button>
   </header>
@@ -54,9 +56,44 @@
         </select>
       </label>
       <label class="row"><input id="confirmActions" type="checkbox"> Спрашивать перед каждым действием на странице</label>
+      <fieldset>
+        <legend>Синхронизация с Google</legend>
+        <p class="sync-state" id="syncState">Не подключено</p>
+        <div class="buttons left">
+          <button type="button" id="gLogin" class="primary">Войти через Google</button>
+          <button type="button" id="gSync" hidden>Синхронизировать</button>
+          <button type="button" id="gLogout" hidden>Выйти</button>
+        </div>
+        <p class="note">Разговоры, память Claude и настройки хранятся в скрытой папке приложения на вашем Google Диске (доступ <code>drive.appdata</code>: расширение не видит ваши файлы). Так они появятся на другом телефоне или компьютере с этим расширением.</p>
+        <label class="row"><input id="syncApiKey" type="checkbox"> Синхронизировать и API-ключ</label>
+        <details id="gHelp">
+          <summary>Client ID и Client secret Google (нужны один раз)</summary>
+          <ol class="note">
+            <li>Откройте console.cloud.google.com → создайте проект.</li>
+            <li>«APIs &amp; Services → Library» → включите <b>Google Drive API</b>.</li>
+            <li>«OAuth consent screen» → External → заполните название и почту → в «Test users» добавьте свой Gmail.</li>
+            <li>«Credentials → Create credentials → OAuth client ID» → тип <b>Desktop app</b> → скопируйте Client ID и Client secret сюда.</li>
+          </ol>
+          <label>Client ID<input id="gClientId" autocomplete="off" placeholder="…apps.googleusercontent.com"></label>
+          <label>Client secret<input id="gClientSecret" type="password" autocomplete="off" placeholder="GOCSPX-…"></label>
+        </details>
+      </fieldset>
       <p class="note">Ключ хранится только в этом браузере и отправляется только на api.anthropic.com. Запросы оплачиваются по тарифам API Anthropic (отдельно от подписки claude.ai). Ввод в поля паролей и карт всегда требует вашего подтверждения.</p>
       <div class="buttons"><button value="cancel" type="button" id="cancel">Отмена</button><button value="save" id="save" class="primary">Сохранить</button></div>
     </form>
+  </dialog>
+  <dialog id="history">
+    <h2>Разговоры</h2>
+    <ul class="list" id="convList"></ul>
+    <div class="buttons"><button type="button" class="close">Закрыть</button></div>
+  </dialog>
+
+  <dialog id="memory">
+    <h2>Память Claude</h2>
+    <p class="note">Claude видит эти заметки в начале каждого нового разговора, на всех ваших устройствах. Он сам добавляет сюда то, что стоит помнить; можно добавить и удалить вручную.</p>
+    <ul class="list" id="noteList"></ul>
+    <form id="noteForm" class="add"><input id="noteText" placeholder="Например: отвечай коротко"><button class="primary">Добавить</button></form>
+    <div class="buttons"><button type="button" class="close">Закрыть</button></div>
   </dialog>
   <script src="chat.js"></script>
 </body>

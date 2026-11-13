@@ -44,12 +44,16 @@ export interface AgentOptions {
 
 export class Agent {
   messages: Msg[] = [];
+  /** system prompt of the current conversation (set per conversation: it carries Claude's memory at that moment) */
+  system: string;
   private abort: AbortController | null = null;
-  constructor(private o: AgentOptions) {}
+  constructor(private o: AgentOptions) { this.system = o.system; }
 
   get busy() { return this.abort !== null; }
   stop() { this.abort?.abort(); }
   reset() { this.stop(); this.messages = []; }
+  /** continue an earlier conversation (from this device or synced from another) */
+  load(messages: Msg[], system: string) { this.stop(); this.messages = messages; this.system = system; }
 
   async send(text: string): Promise<void> {
     if (this.abort) throw new Error('busy');
@@ -67,7 +71,7 @@ export class Agent {
       if (signal.aborted) return;
       let msg: Anthropic.Beta.BetaMessage;
       try {
-        msg = await this.o.callModel({ system: this.o.system, tools: this.o.host.tools, messages: this.messages }, (d) => this.o.emit({ type: 'text', delta: d }), signal);
+        msg = await this.o.callModel({ system: this.system, tools: this.o.host.tools, messages: this.messages }, (d) => this.o.emit({ type: 'text', delta: d }), signal);
       } catch (e) {
         this.o.emit({ type: 'turn_end' });
         if (signal.aborted) return;

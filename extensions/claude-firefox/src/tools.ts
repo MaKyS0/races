@@ -22,7 +22,15 @@ export const TOOLS: Anthropic.Beta.BetaTool[] = [
 /** Mutating actions that ask the user first when confirmations are on (typing into password / card fields always asks). */
 const ACTIONS = new Set(['click', 'type_text', 'navigate', 'go_back', 'open_tab']);
 
-export interface Settings { apiKey: string; model: string; effort: 'low' | 'medium' | 'high'; confirmActions: boolean; /** only for the end-to-end test's mock API */ baseURL?: string }
+export interface Settings {
+  apiKey: string; model: string; effort: 'low' | 'medium' | 'high'; confirmActions: boolean;
+  /** Google sync: the user's own OAuth client ("Desktop app" type) and whether the API key travels with the sync */
+  googleClientId: string; googleClientSecret: string; syncApiKey: boolean;
+  /** when the synced part of the settings last changed (newest wins across devices) */
+  settingsUpdated: number;
+  /** only for the end-to-end tests' mock servers */
+  baseURL?: string; googleEndpoints?: { authUrl: string; tokenUrl: string; apiUrl: string; uploadUrl: string };
+}
 
 /** Runs a self-contained page function in a tab and returns its result. */
 async function inPage<A, R>(tabId: number, fn: (a: A) => R, args: A): Promise<R> {
@@ -58,22 +66,7 @@ export class BrowserHost implements ToolHost {
     }
   }
 
-  validate(name: string, input: unknown): string | null {
-    const t = TOOLS.find((x) => x.name === name);
-    if (!t) return `unknown tool ${name}`;
-    if (!input || typeof input !== 'object' || Array.isArray(input)) return 'input must be an object';
-    const schema = t.input_schema as { properties: Record<string, { type: string; enum?: string[] }>; required: string[] };
-    const o = input as Record<string, unknown>;
-    for (const k of schema.required) if (!(k in o)) return `missing "${k}"`;
-    for (const [k, v] of Object.entries(o)) {
-      const p = schema.properties[k];
-      if (!p) return `unexpected "${k}"`;
-      const ok = p.type === 'integer' ? Number.isInteger(v) : typeof v === p.type;
-      if (!ok) return `"${k}" must be ${p.type}`;
-      if (p.enum && !p.enum.includes(v as string)) return `"${k}" must be one of ${p.enum.join(', ')}`;
-    }
-    return null;
-  }
+  validate(name: string, input: unknown): string | null { return validateAgainst(TOOLS, name, input); }
 
   summarize(name: string, i: Record<string, unknown>): string {
     switch (name) {
@@ -169,4 +162,57 @@ export class BrowserHost implements ToolHost {
     }
     return fail(`unknown tool ${name}`);
   }
+}
+
+// ---------------------------------------------------------------- memory shared between devices (synced through Google Drive)
+export interface MemoryStore { add(text: string): Promise<string>; remove(id: string): Promise<boolean> }
+
+export const MEMORY_TOOLS: Anthropic.Beta.BetaTool[] = [
+  tool('remember', 'Save a short note to your long-term memory about the user: a lasting preference or fact they would want you to know next time (e.g. "prefers answers in Russian, short", "home city: Kazan"). It is shown to you at the start of every new conversation, on all of the user\'s devices. Never store passwords, card numbers, codes or other secrets.', obj({ text: { type: 'string', description: 'one self-contained sentence' } }, ['text'])),
+  tool('forget', 'Delete a note from your memory by its id (the [id] shown in your memory list), e.g. when the user asks or it is outdated.', obj({ id: { type: 'string' } }, ['id'])),
+];
+
+export class MemoryHost implements ToolHost {
+  tools = MEMORY_TOOLS;
+  constructor(private store: MemoryStore) {}
+  validate(name: string, input: unknown) { return validateAgainst(this.tools, name, input); }
+  async needsConfirmation() { return null; }
+  summarize(name: string, i: Record<string, unknown>) { return name === 'remember' ? `Запоминаю: «${String(i.text).slice(0, 80)}»` : `Забываю заметку ${i.id}`; }
+  async run(name: string, i: Record<string, unknown>): Promise<ToolOutcome> {
+    if (name === 'remember') {
+      const t = String(i.text).trim();
+      if (!t) return { content: 'Empty note, nothing saved.', isError: true };
+      return { content: `Saved as [${await this.store.add(t.slice(0, 500))}]. It will be in your memory from the next conversation on.` };
+    }
+    return (await this.store.remove(String(i.id))) ? { content: 'Deleted.' } : { content: `No note with id ${i.id}.`, isError: true };
+  }
+}
+
+/** several tool hosts behind one: calls go to the host that defines the tool */
+export function combine(...hosts: ToolHost[]): ToolHost {
+  const of = (name: string) => hosts.find((h) => h.tools.some((t) => t.name === name));
+  return {
+    tools: hosts.flatMap((h) => h.tools),
+    validate: (n, i) => { const h = of(n); return h ? h.validate(n, i) : `unknown tool ${n}`; },   // null = valid, so no ??
+    needsConfirmation: async (n, i) => (await of(n)?.needsConfirmation(n, i)) ?? null,
+    run: async (n, i) => { const h = of(n); return h ? h.run(n, i) : { content: `unknown tool ${n}`, isError: true }; },
+    summarize: (n, i) => of(n)?.summarize(n, i) ?? n,
+  };
+}
+
+function validateAgainst(tools: Anthropic.Beta.BetaTool[], name: string, input: unknown): string | null {
+  const t = tools.find((x) => x.name === name);
+  if (!t) return `unknown tool ${name}`;
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return 'input must be an object';
+  const schema = t.input_schema as { properties: Record<string, { type: string; enum?: string[] }>; required: string[] };
+  const o = input as Record<string, unknown>;
+  for (const k of schema.required) if (!(k in o)) return `missing "${k}"`;
+  for (const [k, v] of Object.entries(o)) {
+    const p = schema.properties[k];
+    if (!p) return `unexpected "${k}"`;
+    const ok = p.type === 'integer' ? Number.isInteger(v) : typeof v === p.type;
+    if (!ok) return `"${k}" must be ${p.type}`;
+    if (p.enum && !p.enum.includes(v as string)) return `"${k}" must be one of ${p.enum.join(', ')}`;
+  }
+  return null;
 }
