@@ -1,0 +1,23 @@
+{
+  "name": "claude-firefox",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Claude in Firefox for Android: chat with Claude, and let it read and operate the open page",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node build.mjs --test && node --test .test-out/*.test.mjs",
+    "lint": "web-ext lint --source-dir dist",
+    "package": "npm run build && web-ext build --source-dir dist --artifacts-dir artifacts --overwrite-dest"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0"
+  },
+  "devDependencies": {
+    "@types/firefox-webext-browser": "^143.0.1",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "web-ext": "^10.8.0"
+  }
+}

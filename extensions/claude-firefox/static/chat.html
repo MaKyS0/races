@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Claude</title>
+  <link rel="stylesheet" href="chat.css">
+</head>
+<body>
+  <header>
+    <div class="brand"><img src="icon.svg" alt=""><span>Claude</span></div>
+    <div class="target" id="target" title="Вкладка, с которой работает Claude">нет открытой страницы</div>
+    <button id="new" class="icon" title="Новый разговор" aria-label="Новый разговор">＋</button>
+    <button id="gear" class="icon" title="Настройки" aria-label="Настройки">⚙</button>
+  </header>
+
+  <main id="log" aria-live="polite">
+    <div class="empty" id="empty">
+      <p><b>Claude в браузере.</b> Спросите что угодно или попросите сделать что-то на открытой странице:</p>
+      <ul>
+        <li>«Кратко перескажи эту статью»</li>
+        <li>«Найди на этом сайте контакты поддержки»</li>
+        <li>«Заполни поиск: билеты Москва — Казань на пятницу»</li>
+      </ul>
+      <p class="hint">Claude работает с последней открытой вкладкой с сайтом. Переключитесь на нужную вкладку, затем вернитесь сюда.</p>
+    </div>
+  </main>
+
+  <form id="composer">
+    <textarea id="input" rows="1" placeholder="Сообщение для Claude…" enterkeyhint="send"></textarea>
+    <button id="send" type="submit" aria-label="Отправить">➤</button>
+    <button id="stop" type="button" class="stop" aria-label="Остановить" hidden>■</button>
+  </form>
+
+  <dialog id="settings">
+    <form method="dialog" id="settingsForm">
+      <h2>Настройки</h2>
+      <label>API-ключ Anthropic
+        <input id="apiKey" type="password" autocomplete="off" placeholder="sk-ant-…">
+        <small id="keyState"></small>
+      </label>
+      <label>Модель
+        <select id="model">
+          <option value="claude-opus-5-5">Claude Opus 5.5 (лучшее качество)</option>
+          <option value="claude-sonnet-5-5">Claude Sonnet 5.5 (быстрее, дешевле)</option>
+          <option value="claude-haiku-5-5">Claude Haiku 5.5 (самый быстрый)</option>
+        </select>
+      </label>
+      <label>Усилие
+        <select id="effort">
+          <option value="low">низкое — быстрее и дешевле</option>
+          <option value="medium">среднее</option>
+          <option value="high">высокое — для сложных задач</option>
+        </select>
+      </label>
+      <label class="row"><input id="confirmActions" type="checkbox"> Спрашивать перед каждым действием на странице</label>
+      <p class="note">Ключ хранится только в этом браузере и отправляется только на api.anthropic.com. Запросы оплачиваются по тарифам API Anthropic (отдельно от подписки claude.ai). Ввод в поля паролей и карт всегда требует вашего подтверждения.</p>
+      <div class="buttons"><button value="cancel" type="button" id="cancel">Отмена</button><button value="save" id="save" class="primary">Сохранить</button></div>
+    </form>
+  </dialog>
+  <script src="chat.js"></script>
+</body>
+</html>
